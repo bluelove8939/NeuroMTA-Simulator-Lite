@@ -2,7 +2,7 @@ import math
 import functools
 from typing import Sequence
 
-from neuromta.common import *
+from neuromta.simulation.common import *
 
 
 __all__ = [
@@ -55,11 +55,11 @@ class VariableDescriptor:
         if len(tile_shape) != 2:
             raise Exception(f"[ERROR] The shape of the tile should be 2D, not {len(tile_shape)}D")
         
-    def create_buffer(self, mem_desc: MemoryDescriptor, tile_idx: int):
+    def create_buffer(self, mem_desc: MemoryDescriptor, tile_idx: int, readonly: bool):
         if not isinstance(tile_idx, int):
             raise Exception(f"[ERROR] The tile index should be an integer, not '{type(tile_idx).__name__}'")
         
-        return BufferDescriptor(var_desc=self, mem_desc=mem_desc, tile_idx=tile_idx,)
+        return BufferDescriptor(var_desc=self, mem_desc=mem_desc, tile_idx=tile_idx, readonly=readonly)
         
     def tile_id(self, r, c):
         rn = math.ceil(self.shape[0] / self.tile_shape[0])
@@ -102,10 +102,12 @@ class BufferDescriptor:
         var_desc: VariableDescriptor,
         mem_desc: MemoryDescriptor,
         tile_idx: int,
+        readonly: bool,
     ):  
         self.var_desc   = var_desc
         self.mem_desc   = mem_desc
         self.tile_idx   = tile_idx
+        self.readonly   = readonly
     
     @property
     def size(self) -> int:

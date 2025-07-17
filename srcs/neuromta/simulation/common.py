@@ -8,6 +8,7 @@ __all__ = [
     "T_UNIT",
     
     "SACoreDataflow",
+    "SACoreOperatorType",
     "MemoryType",
     
     "parse_freq_str",
@@ -33,6 +34,12 @@ class SACoreDataflow(enum.Enum):
             return cls.WS
         else:
             raise Exception(f"[ERROR] Invalid dataflow expression '{expr}'")
+        
+
+class SACoreOperatorType(enum.Enum):
+    PRELOAD = enum.auto()
+    EXECUTE = enum.auto()
+    FLUSH   = enum.auto()
     
 
 class MemoryType(enum.Enum):
