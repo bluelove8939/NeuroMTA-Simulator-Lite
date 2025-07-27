@@ -7,10 +7,6 @@ __all__ = [
     "G_UNIT",
     "T_UNIT",
     
-    "SACoreDataflow",
-    "SACoreOperatorType",
-    "MemoryType",
-    
     "parse_freq_str",
     "parse_mem_cap_str",
 ]
@@ -20,31 +16,6 @@ K_UNIT = 1024
 M_UNIT = K_UNIT * 1024
 G_UNIT = M_UNIT * 1024
 T_UNIT = G_UNIT * 1024
-
-
-class SACoreDataflow(enum.Enum):
-    OS = enum.auto()
-    WS = enum.auto()
-    
-    @classmethod
-    def from_str(cls, expr: str):
-        if expr == "OS":
-            return cls.OS
-        elif expr == "WS":
-            return cls.WS
-        else:
-            raise Exception(f"[ERROR] Invalid dataflow expression '{expr}'")
-        
-
-class SACoreOperatorType(enum.Enum):
-    PRELOAD = enum.auto()
-    EXECUTE = enum.auto()
-    FLUSH   = enum.auto()
-    
-
-class MemoryType(enum.Enum):
-    L1   = enum.auto()
-    L2   = enum.auto()
     
     
 def parse_freq_str(expr: str) -> int:
