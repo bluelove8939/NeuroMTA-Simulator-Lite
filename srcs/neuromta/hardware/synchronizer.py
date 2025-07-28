@@ -1,5 +1,6 @@
 __all__ = [
     "CircularBufferHandle",
+    "TicketLock",
 ]
 
 
@@ -37,3 +38,33 @@ class CircularBufferHandle:
     @property
     def is_locked(self) -> bool:
         return self._rsvd_sem > 0
+    
+
+class TicketLock:
+    def __init__(self, ticket_max: int = 2 ** 32 - 1):
+        self._now_serving = 0
+        self._next_ticket = 0
+        self._ticket_max  = ticket_max
+
+    def get_ticket(self):
+        t = self._next_ticket
+        self._increase_next_ticket()
+        return t
+
+    def is_locked_with(self, ticket: int) -> bool:
+        return self._now_serving != ticket
+
+    def unlock(self):
+        self._increase_now_serving()
+
+    def _increase_now_serving(self):
+        self._now_serving += 1
+
+        if self._now_serving > self._ticket_max:
+            self._now_serving = 0
+            
+    def _increase_next_ticket(self):
+        self._next_ticket += 1
+
+        if self._next_ticket > self._ticket_max:
+            self._next_ticket = 0

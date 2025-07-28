@@ -1,29 +1,63 @@
-import enum
 from typing import Callable, Sequence, Any
-
-from neuromta.common.custom_types import DataType
 
 
 __all__ = [
+    "set_global_core_context",
+    "set_global_compiled_kernel_context",
+    "get_global_core_context",
+    "get_global_compiled_kernel_context",
+    "get_global_context",
+    
     "Command",
-    "CompiledCoreKernel",
+    "CompiledKernel",
     "Core",
     
     "register_command_to_compiled_kernel",
     "core_kernel_method",
     "core_command_method",
+    
+    "DEFAULT_CORE_ID"
 ]
 
 
-_compiled_kernel_context: 'CompiledCoreKernel' = None
 MAX_COMMAND_NUM_PER_KERNEL = 8192
-UNKNOWN = "UNKNOWN"
+DEFAULT_CORE_ID = "__DEFAULT"
+
+
+_core_context: 'Core' = None
+_compiled_kernel_context: 'CompiledKernel' = None
+
+def set_global_core_context(core: 'Core'):
+    global _core_context
+    _core_context = core
+
+def get_global_core_context() -> str:
+    global _core_context
+    if _core_context is None:
+        raise Exception("[ERROR] Global core context is not set. Please set it using set_global_core_context() before using it.")
+    return _core_context.core_id
+
+def set_global_compiled_kernel_context(kernel: 'CompiledKernel'):
+    global _compiled_kernel_context
+    _compiled_kernel_context = kernel
+
+def get_global_compiled_kernel_context() -> str:
+    global _compiled_kernel_context
+    if _compiled_kernel_context is None:
+        raise Exception("[ERROR] Global compiled kernel context is not set. Please set it using set_global_compiled_kernel_context() before using it.")
+    return _compiled_kernel_context.kernel_id
+
+def get_global_context() -> str:
+    cid = get_global_core_context()
+    kid = get_global_compiled_kernel_context()
+    return f"{cid}.{kid}"
 
 
 class Command:
     def __init__(
         self, 
         core: 'Core',
+        kernel: 'CompiledKernel',
         cmd_id: str,
         cycle_model: Any,
         behavioral_model: Callable,
@@ -31,6 +65,7 @@ class Command:
         **kwargs
     ):
         self.core               = core
+        self.kernel             = kernel
         self.cmd_id             = cmd_id
         self.cycle_model        = cycle_model
         self.behavioral_model   = behavioral_model
@@ -74,7 +109,17 @@ class Command:
             self.core.run_command_debug_hook(cmd=self)
 
     def run_behavioral_model(self):
+        set_global_core_context(self.core)
+        set_global_compiled_kernel_context(self.kernel)
         return self.behavioral_model(self.core, *self.args, **self.kwargs)
+    
+    @property
+    def core_id(self) -> str:
+        return self.core.core_id
+    
+    @property
+    def kernel_id(self) -> str:
+        return self.kernel.kernel_id
         
     @property
     def is_finished(self) -> bool:
@@ -84,10 +129,10 @@ class Command:
         return f"Command[cmd_id={self.cmd_id}](args=({', '.join(map(str, self.args))}), kwargs={{{', '.join(f'{k}={v}' for k, v in self.kwargs.items())}}})"
 
 
-class CompiledCoreKernel:
+class CompiledKernel:
     def __init__(self, kernel_id: str):
         self.kernel_id = kernel_id
-        self._command_subkernel_queue: list[Command | CompiledCoreKernel] = []
+        self._command_subkernel_queue: list[Command | CompiledKernel] = []
         self._cursor: int = 0
         
     def add_command(self, cmd: Command):
@@ -102,8 +147,8 @@ class CompiledCoreKernel:
         
         self._command_subkernel_queue.append(cmd)
         
-    def add_subkernel(self, subkernel: 'CompiledCoreKernel'):
-        if not isinstance(subkernel, CompiledCoreKernel):
+    def add_subkernel(self, subkernel: 'CompiledKernel'):
+        if not isinstance(subkernel, CompiledKernel):
             raise Exception(f"[ERROR] Cannot add subkernel '{subkernel}' to the compiled kernel since it is not an instance of CompiledKernel")
         
         if len(self._command_subkernel_queue) >= MAX_COMMAND_NUM_PER_KERNEL:
@@ -139,7 +184,7 @@ class CompiledCoreKernel:
         
         item = self._command_subkernel_queue[self._cursor]
         
-        if isinstance(item, CompiledCoreKernel):
+        if isinstance(item, CompiledKernel):
             return item.current_command
         elif isinstance(item, Command):
             return item
@@ -152,21 +197,28 @@ class CompiledCoreKernel:
     
     
 class Core:
-    def __init__(self, core_id: str=UNKNOWN):
+    def __init__(self, core_id: str=DEFAULT_CORE_ID):
         self.core_id = core_id
-        self._dispatched_kernels: list[CompiledCoreKernel] = []
+        self._dispatched_kernels: dict[str, CompiledKernel] = {}
         self._registered_command_debug_hooks: dict[str, Callable[[Command], None]] = {}
 
-    def dispatch_kernel(self, kernel: CompiledCoreKernel):
-        if not isinstance(kernel, CompiledCoreKernel):
+    def dispatch_kernel(self, kernel: CompiledKernel):
+        if not isinstance(kernel, CompiledKernel):
             raise Exception(f"[ERROR] Cannot dispatch kernel '{kernel}' to the core since it is not an instance of CompiledKernel")
         
-        self._dispatched_kernels.append(kernel)
+        kernel_name = kernel.kernel_id
+        i = 0
+        
+        while kernel.kernel_id in self._dispatched_kernels.keys():
+            kernel.kernel_id = f"{kernel_name}_{i}"
+            i += 1
+            
+        self._dispatched_kernels[kernel.kernel_id] = kernel
         
     def get_current_commands(self) -> Sequence[Command]:
         ret = []
         
-        for kernel in self._dispatched_kernels:
+        for kernel in self._dispatched_kernels.values():
             cmd = kernel.current_command
             if cmd is not None:
                 ret.append(cmd)
@@ -182,8 +234,14 @@ class Core:
         return max(1, min(map(lambda x: x.get_remaining_cycles(), cmds)))
     
     def update_cycle_time(self, cycle_time: int):
-        for kernel in self._dispatched_kernels:
+        kernel_ids = list(self._dispatched_kernels.keys())
+
+        for kernel_id in kernel_ids:
+            kernel = self._dispatched_kernels[kernel_id]
             kernel.update_cycle_time(cycle_time)
+            
+            if kernel.is_finished:
+                del self._dispatched_kernels[kernel_id]
             
     def register_command_debug_hook(self, hook: Callable[[Command], None]) -> str:
         def create_hook_id(i: int) -> str:
@@ -214,6 +272,8 @@ class Core:
     
     @property
     def is_idle(self) -> bool:
+        if len(self._dispatched_kernels) == 0:
+            return True
         return len(self.get_current_commands()) == 0
     
     
@@ -228,21 +288,21 @@ def register_command_to_compiled_kernel(command: Command):
 
         
 def core_kernel_method(_func: Callable):
-    def __core_kernel_method_wrapper(*_args, **_kwargs) -> CompiledCoreKernel:
+    def __core_kernel_method_wrapper(*_args, **_kwargs) -> CompiledKernel:
         global _compiled_kernel_context
         
         _compiled_kernel_context_history = _compiled_kernel_context
         
-        if not (isinstance(_compiled_kernel_context_history, CompiledCoreKernel) or _compiled_kernel_context_history is None):
+        if not (isinstance(_compiled_kernel_context_history, CompiledKernel) or _compiled_kernel_context_history is None):
             raise Exception(f"[ERROR] Low-level kernel function '{_func.__name__}' can only be called within another low-level kernel function or outside of any kernel context")
         
-        _compiled_kernel_context = CompiledCoreKernel(kernel_id=_func.__name__)
+        _compiled_kernel_context = CompiledKernel(kernel_id=_func.__name__)
         _r = _func(*_args, **_kwargs)
         
         if _r is not None:
             raise Exception(f"[ERROR] Low-level kernel function '{_func.__name__}' should not return a value")
         
-        if isinstance(_compiled_kernel_context_history, CompiledCoreKernel):
+        if isinstance(_compiled_kernel_context_history, CompiledKernel):
             _compiled_kernel_context_history.add_subkernel(_compiled_kernel_context)
         
         kernel = _compiled_kernel_context
@@ -264,12 +324,13 @@ def core_command_method(_cycle_model: Any) -> Callable:
                 return _func(_core, *_args, **_kwargs)
                     
             cmd = Command(
-                _core,
-                _func.__name__,
-                _cycle_model,
-                _func,
-                *_args,
-                **_kwargs
+                _core,                      # the core on which this command is registered
+                _compiled_kernel_context,   # the kernel context in which this command is registered
+                _func.__name__,             # the command ID is the name of the function
+                _cycle_model,               # the cycle model is the first argument
+                _func,                      # the behavioral model is the function itself
+                *_args,                     # the arguments of the command
+                **_kwargs                   # the keyword arguments of the command
             )
             
             register_command_to_compiled_kernel(cmd)
@@ -277,68 +338,3 @@ def core_command_method(_cycle_model: Any) -> Callable:
             return cmd
         return __core_command_method_wrapper
     return __core_command_method_decorator
-        
-    
-if __name__ == "__main__":  
-    class CustomCore(Core):
-        def __init__(self):
-            super().__init__()
-            
-            self.reg = 0
-        
-        @core_command_method(1)
-        def command1(self, arg1: int, arg2: str):
-            self.reg += 1
-            print(f"Executing command1 with arg1={arg1} and arg2='{arg2}'")
-            
-        @core_command_method(1)
-        def command2(self):
-            # self.reg += 1
-            # print(f"Executing command2")
-            print("Executing command2")
-            
-            if self.reg >= 5:
-                return True
-            return False
-    
-       
-    @core_kernel_method
-    def example_kernel_1(core: CustomCore):
-        for i in range(10):
-            core.command1(arg1=0, arg2="kernel1 triggering semaphore")
-        
-    @core_kernel_method
-    def example_kernel_2(core: CustomCore):
-        core.command2()
-        core.command1(arg1=0, arg2="kernel2 terminated")
-        
-    
-    core = CustomCore()
-    kernel1 = example_kernel_1(core)
-    kernel2 = example_kernel_2(core)
-    
-    print(kernel1)
-    print(kernel2)
-    
-    # print(kernel)
-    
-    core.dispatch_kernel(kernel1)
-    core.dispatch_kernel(kernel2)
-    
-    total_cycles = 0
-    
-    max_iter = 20
-    
-    while not core.is_idle:
-        print(f"# {total_cycles}")
-        cycles = core.get_remaining_cycles()
-        core.update_cycle_time(cycles)
-        
-        total_cycles += cycles
-        max_iter -= 1
-        
-        if max_iter <= 0:
-            print("Max iterations reached, stopping execution.")
-            break
-        
-    print(f"Total cycles executed: {total_cycles}")

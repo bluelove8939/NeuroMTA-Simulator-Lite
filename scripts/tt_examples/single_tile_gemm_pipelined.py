@@ -8,34 +8,36 @@ from neuromta.hardware.npu_device import *
 @core_kernel_method
 def gemm1_read_kernel(core: NPUCore):
     core.local_cb_reserve_back("ifm_buffer", 1)
-    core.local_cb_reserve_back("wgt_buffer", 1)
-    core.local_cb_reserve_back("psum_buffer", 1)
-    
     core.l1_read(0, core.l1_block_size)
     core.local_cb_push_back("ifm_buffer", 1)
-        
+    
+    core.local_cb_reserve_back("wgt_buffer", 1)
     core.l1_read(0, core.l1_block_size)
     core.local_cb_push_back("wgt_buffer", 1)
-        
+    
+    core.local_cb_reserve_back("psum_buffer", 1)
     core.l1_read(0, core.l1_block_size)
     core.local_cb_push_back("psum_buffer", 1)
     
 @core_kernel_method
 def gemm1_compute_kernel(core: NPUCore):
     core.local_cb_wait_front("ifm_buffer", 1)
-    core.local_cb_wait_front("wgt_buffer", 1)
-    core.local_cb_wait_front("psum_buffer", 1)
-
     core.local_cb_pop_front("ifm_buffer", 1)
+    
+    core.local_cb_wait_front("wgt_buffer", 1)
     core.local_cb_pop_front("wgt_buffer", 1)
+    
+    core.local_cb_wait_front("psum_buffer", 1)
     core.local_cb_pop_front("psum_buffer", 1)
     
     core.mxu_preload()
     core.mxu_execute()
     core.mxu_flush()
     
+    core.global_controller.acquire_global_lock()
     core.global_controller.cb_reserve_back("gemm2_ifm_buffer", 1)
     core.global_controller.cb_push_back("gemm2_ifm_buffer", 1)
+    core.global_controller.release_global_lock()
     
 @core_kernel_method
 def gemm1_write_kernel(core: NPUCore):
@@ -55,12 +57,15 @@ def gemm2_read_kernel(core: NPUCore):
     
 @core_kernel_method
 def gemm2_compute_kernel(core: NPUCore):
+    core.global_controller.acquire_global_lock()
     core.global_controller.cb_wait_front("gemm2_ifm_buffer", 1)
-    core.local_cb_wait_front("wgt_buffer", 1)
-    core.local_cb_wait_front("psum_buffer", 1)
-    
     core.global_controller.cb_pop_front("gemm2_ifm_buffer", 1)
+    core.global_controller.release_global_lock()
+    
+    core.local_cb_wait_front("wgt_buffer", 1)
     core.local_cb_pop_front("wgt_buffer", 1)
+    
+    core.local_cb_wait_front("psum_buffer", 1)
     core.local_cb_pop_front("psum_buffer", 1)
     
     core.mxu_preload()

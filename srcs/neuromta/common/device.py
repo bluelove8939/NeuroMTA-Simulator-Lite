@@ -1,6 +1,7 @@
 from typing import Sequence
 
-from neuromta.common.core import Core, Command
+from neuromta.common.core import Core, Command, DEFAULT_CORE_ID
+
 
 class Device:
     def __init__(self):
@@ -13,8 +14,11 @@ class Device:
                 if isinstance(item, (Core, Sequence)):
                     self._register_core(f"{name}[{idx}]", item)
         elif isinstance(core, Core):
-            self._cores[name] = core
-            core.core_id = name
+            if core.core_id == DEFAULT_CORE_ID:
+                core.core_id = name
+            if core.core_id in self._cores.keys():
+                raise Exception(f"[ERROR] Core with ID '{core.core_id}' already exists. Please use a unique core ID.")
+            self._cores[core.core_id] = core
             core.register_command_debug_hook(self.default_command_debug_hook)
 
     def initialize(self):
@@ -54,7 +58,7 @@ class Device:
             core.update_cycle_time(cycles)
     
     def default_command_debug_hook(self, cmd: Command):
-        print(f"[DEBUG] #{self.timestamp:<5d} | core: {cmd.core.core_id:<24s} | command: {cmd.cmd_id:<24s} args:({', '.join(map(str, cmd.args))}) kwargs:{{{', '.join(f'{k}={v}' for k, v in cmd.kwargs.items())}}}")
+        print(f"[DEBUG] #{self.timestamp:<5d} | core: {cmd.core_id:<24s} | kernel: {cmd.kernel_id:<24s} | command: {cmd.cmd_id:<24s} args:({', '.join(map(str, cmd.args))}) kwargs:{{{', '.join(f'{k}={v}' for k, v in cmd.kwargs.items())}}}")
     
     @property
     def timestamp(self) -> int:

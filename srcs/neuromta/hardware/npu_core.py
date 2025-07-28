@@ -4,12 +4,14 @@ import math
 from neuromta.common.core import *
 from neuromta.common.parser_utils import parse_mem_cap_str
 
+from neuromta.hardware.npu_global_controller import NPUGlobalController
 from neuromta.hardware.synchronizer import CircularBufferHandle
 
 
 __all__ = [
     "MXUDataflow",
-    "NPUGlobalController",
+    "VPUOpMetadata",
+    "VPUOp",
     "NPUCore",
 ]
 
@@ -18,83 +20,31 @@ class MXUDataflow(enum.Enum):
     OS = enum.auto()
     WS = enum.auto()
     
+
+class VPUOpMetadata:
+    class Type(enum.Enum):
+        UNARY = enum.auto()
+        ARITH = enum.auto()
     
-class NPUGlobalController(Core):
-    def __init__(
-        self, 
-        cb_sem_access_latency: int = 1,
-        cb_access_latency_per_entry: int = 1,
-    ):
-        super().__init__()
+    def __init__(self, op_name: str, op_type: Type):
+        self.op_name = op_name
+        self.op_type = op_type
 
-        self.cb_sem_access_latency = cb_sem_access_latency
-        self.cb_access_latency_per_entry = cb_access_latency_per_entry
-
-        self.cb_handles: dict[str, CircularBufferHandle] = {}
-        
-    def cb_access_latency(self, name: str, entry_num: int):
-        return self.cb_access_latency_per_entry * entry_num
-
-    def cb_create_buffer_handle(self, name: str, entry_num: int):
-        if name in self.cb_handles:
-            raise Exception(f"[ERROR] Circular buffer with name '{name}' already exists.")
-        if entry_num <= 0:
-            raise Exception("[ERROR] Entry number must be greater than 0.")
-        
-        self.cb_handles[name] = CircularBufferHandle(entry_num)
-
-    def cb_remove_buffer_handle(self, name: str):
-        if name not in self.cb_handles:
-            raise Exception(f"[ERROR] Circular buffer with name '{name}' does not exist.")
-        
-        del self.cb_handles[name]
-        
-    @core_command_method("cb_sem_access_latency")
-    def cb_reserve_back(self, name: str, entry_num: int):
-        if name not in self.cb_handles:
-            raise Exception(f"[ERROR] Circular buffer with name '{name}' does not exist.")
-        
-        handle = self.cb_handles[name]
-        
-        if not handle.check_vacancy(entry_num): return False
-        if handle.is_locked: return False
-        
-        handle.lock(entry_num)
-        
-    @core_command_method("cb_access_latency")
-    def cb_push_back(self, name: str, entry_num: int):
-        if name not in self.cb_handles:
-            raise Exception(f"[ERROR] Circular buffer with name '{name}' does not exist.")
-        
-        handle = self.cb_handles[name]
-        handle.push_back(entry_num)
-        handle.unlock(entry_num)
-        
-    @core_command_method("cb_sem_access_latency")
-    def cb_wait_front(self, name: str, entry_num: int):
-        if name not in self.cb_handles:
-            raise Exception(f"[ERROR] Circular buffer with name '{name}' does not exist.")
-        
-        handle = self.cb_handles[name]
-        
-        if not handle.check_occupancy(entry_num): return False
-        if handle.is_locked: return False
-        
-        handle.lock(entry_num)
-
-    @core_command_method("cb_access_latency")
-    def cb_pop_front(self, name: str, entry_num: int=1):
-        if name not in self.cb_handles:
-            raise Exception(f"[ERROR] Circular buffer with name '{name}' does not exist.")
-        
-        handle = self.cb_handles[name]        
-        handle.pop_front(entry_num)
-        handle.unlock(entry_num)
+class VPUOp:
+    ADD     = VPUOpMetadata("add", VPUOpMetadata.Type.ARITH)
+    SUB     = VPUOpMetadata("sub", VPUOpMetadata.Type.ARITH)
+    MUL     = VPUOpMetadata("mul", VPUOpMetadata.Type.ARITH)
+    DIV     = VPUOpMetadata("div", VPUOpMetadata.Type.ARITH)
+    
+    NEG     = VPUOpMetadata("neg", VPUOpMetadata.Type.UNARY)
+    ABS     = VPUOpMetadata("abs", VPUOpMetadata.Type.UNARY)
+    RELU    = VPUOpMetadata("relu", VPUOpMetadata.Type.UNARY)
 
 
 class NPUCore(Core):
     def __init__(
         self,
+        core_id: str,
         
         # Global context
         global_controller: NPUGlobalController,
@@ -104,6 +54,11 @@ class NPUCore(Core):
         mxu_n_tile: int = 32,
         mxu_k_tile: int = 32,
         mxu_dataflow: MXUDataflow = MXUDataflow.OS,
+        
+        # VPU configuration
+        vpu_max_vlen: int = 256,
+        vpu_unary_op_latency: int = 2,
+        vpu_arith_op_latency: int = 4,
         
         # L1 memory configuration
         l1_capacity: int = parse_mem_cap_str("1MB"),
@@ -115,7 +70,7 @@ class NPUCore(Core):
         local_cb_sem_access_latency: int = 1,
         local_cb_access_latency_per_entry: int = 1,
     ):
-        super().__init__()
+        super().__init__(core_id=core_id)
         
         self.mxu_m_tile = mxu_m_tile
         self.mxu_n_tile = mxu_n_tile
@@ -131,6 +86,10 @@ class NPUCore(Core):
             self.mxu_pe_arr_width  = self.mxu_n_tile
             self.mxu_tile_seq_len  = self.mxu_m_tile
             
+        self.vpu_max_vlen = vpu_max_vlen
+        self.vpu_unary_op_latency = vpu_unary_op_latency
+        self.vpu_arith_op_latency = vpu_arith_op_latency
+        
         self.l1_capacity = l1_capacity
         self.l1_block_size = l1_block_size
         self.l1_read_cycle_per_block = l1_read_cycle_per_block
@@ -154,6 +113,19 @@ class NPUCore(Core):
 
     @core_command_method("mxu_pe_arr_width")
     def mxu_flush(self):
+        pass
+    
+    # VPU commands
+    def _vpu_op_cycles(self, op: VPUOpMetadata, vlen: int) -> int:
+        if op.op_type == VPUOpMetadata.Type.UNARY:
+            return self.vpu_unary_op_latency * math.ceil(vlen / self.vpu_max_vlen)
+        elif op.op_type == VPUOpMetadata.Type.ARITH:
+            return self.vpu_arith_op_latency * math.ceil(vlen / self.vpu_max_vlen)
+        else:
+            raise ValueError(f"Unsupported VPU operation type: {op.op_type}")
+    
+    @core_command_method("_vpu_op_cycles")
+    def vpu_op(self, op: VPUOpMetadata, vlen: int):
         pass
     
     # L1 memory access commands
@@ -235,9 +207,13 @@ class NPUCore(Core):
 
 
 # if __name__ == "__main__":
-#     global_controller = NPUGlobalController()
+#     global_controller = NPUGlobalController(core_id="global_controller")
     
 #     core = NPUCore(
+#         core_id="npu_core",
+
+#         global_controller=global_controller,
+
 #         mxu_m_tile=32,
 #         mxu_n_tile=32,
 #         mxu_k_tile=256,
@@ -287,16 +263,22 @@ class NPUCore(Core):
         
 
 if __name__ == "__main__":
-    global_controller = NPUGlobalController()
+    global_controller = NPUGlobalController(core_id="global_controller")
     
     core = NPUCore(
+        core_id="npu_core",
+        
         global_controller=global_controller,
         
         mxu_m_tile=32,
         mxu_n_tile=32,
         mxu_k_tile=256,
         mxu_dataflow=MXUDataflow.OS,
-        
+
+        vpu_max_vlen=256,
+        vpu_unary_op_latency=2,
+        vpu_arith_op_latency=4,
+
         l1_capacity=parse_mem_cap_str("1MB"),
         l1_block_size=parse_mem_cap_str("16B"),
         l1_read_cycle_per_block=1,
@@ -324,6 +306,8 @@ if __name__ == "__main__":
         for _ in range(4):
             core.mxu_execute()
         core.mxu_flush()
+        
+        core.vpu_op(VPUOp.RELU, 1024)
         
         core.local_cb_reserve_back("result", 1)
         core.local_cb_push_back("result", 1)
