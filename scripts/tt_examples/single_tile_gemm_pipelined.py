@@ -1,3 +1,5 @@
+import os
+
 from neuromta.common.core import *
 from neuromta.common.parser_utils import parse_mem_cap_str
 
@@ -34,10 +36,10 @@ def gemm1_compute_kernel(core: NPUCore):
     core.mxu_execute()
     core.mxu_flush()
     
-    core.global_controller.acquire_global_lock()
-    core.global_controller.cb_reserve_back("gemm2_ifm_buffer", 1)
-    core.global_controller.cb_push_back("gemm2_ifm_buffer", 1)
-    core.global_controller.release_global_lock()
+    core._global_controller.acquire_global_lock()
+    core._global_controller.cb_reserve_back("gemm2_ifm_buffer", 1)
+    core._global_controller.cb_push_back("gemm2_ifm_buffer", 1)
+    core._global_controller.release_global_lock()
     
 @core_kernel_method
 def gemm1_write_kernel(core: NPUCore):
@@ -57,10 +59,10 @@ def gemm2_read_kernel(core: NPUCore):
     
 @core_kernel_method
 def gemm2_compute_kernel(core: NPUCore):
-    core.global_controller.acquire_global_lock()
-    core.global_controller.cb_wait_front("gemm2_ifm_buffer", 1)
-    core.global_controller.cb_pop_front("gemm2_ifm_buffer", 1)
-    core.global_controller.release_global_lock()
+    core._global_controller.acquire_global_lock()
+    core._global_controller.cb_wait_front("gemm2_ifm_buffer", 1)
+    core._global_controller.cb_pop_front("gemm2_ifm_buffer", 1)
+    core._global_controller.release_global_lock()
     
     core.local_cb_wait_front("wgt_buffer", 1)
     core.local_cb_pop_front("wgt_buffer", 1)
@@ -101,7 +103,7 @@ if __name__ == "__main__":
         npu_core_grid_y=1
     )
     
-    device.initialize()
+    device.initialize(create_trace=True)
     
     # Create circular buffers for each core
     for core_row in device.npu_cores:
@@ -139,3 +141,13 @@ if __name__ == "__main__":
     device.npu_global_controller.cb_remove_buffer_handle("gemm2_ifm_buffer")
 
     print("NPU Device simulation completed.")
+    
+    # Save traces to a file
+    trace_dirname   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "traces")
+    trace_filename  = os.path.splitext(os.path.basename(__file__))[0] + "_traces.csv"
+    trace_filepath  = os.path.join(trace_dirname, trace_filename)
+
+    os.makedirs(trace_dirname, exist_ok=True)
+    device.save_traces(trace_filepath)
+    
+    print(f"Traces saved to {trace_filepath}")

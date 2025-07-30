@@ -48,7 +48,7 @@ def parse_mem_cap_str(expr: str) -> int:
     elif expr.lower().endswith("gb"):
         expr = int(expr[:-2]) * G_UNIT
     elif expr.lower().endswith("b"):
-        expr = int(expr[:-1]) * G_UNIT
+        expr = int(expr[:-1])
     else:
         try:
             expr = int(expr)

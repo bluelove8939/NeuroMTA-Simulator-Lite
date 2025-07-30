@@ -10,6 +10,7 @@ __all__ = [
 class MemoryType(enum.Enum):
     L1   = enum.auto()
     L2   = enum.auto()
+    MAIN = enum.auto()
     
     
 class DataType(enum.Enum):
