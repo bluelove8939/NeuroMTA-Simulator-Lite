@@ -1,5 +1,5 @@
 from typing import Any, Sequence
-from neuromta.ip.hardware.synchronizer import TicketLock
+from neuromta.ip.hardware.common.synchronizer import TicketLock
 
 
 __all__ = [

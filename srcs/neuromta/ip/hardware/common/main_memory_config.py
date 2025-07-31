@@ -9,7 +9,7 @@ __all__ = [
 ]
 
 
-class MainMemoryConfig(object):
+class MainMemoryConfig:
     def __init__(self, transfer_speed: int, ch_io_width: int, ch_num: int, burst_len: int, is_ddr: bool, processor_clock_freq: int):
         self.transfer_speed         = transfer_speed    # transfer speed per pin (MT/s)
         self.ch_io_width            = ch_io_width       # io channel width (bits)
