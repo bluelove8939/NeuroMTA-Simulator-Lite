@@ -24,6 +24,10 @@ class Device:
         
         self._traces: list[CommandTrace] = []
         
+    def change_sim_model_options(self, use_cycle_model: bool = None, use_functional_model: bool = None):
+        for core in self._cores.values():
+            core.change_sim_model_options(use_cycle_model, use_functional_model)
+        
     def _register_core(self, name: str, core: Core | Sequence[Core]):
         if isinstance(core, Sequence):
             for idx, item in enumerate(core):

@@ -1,15 +1,15 @@
 import math
 
 from neuromta.common.core import *
-from neuromta.common.parser_utils import parse_mem_cap_str
+from neuromta.common.parser_utils import parse_mem_cap_str, parse_freq_str
 
-from neuromta.ip.hardware.common.context import Context
-from neuromta.ip.hardware.common.custom_types import MemoryType
-from neuromta.ip.hardware.common.buffer_handle import BufferHandle, CircularBufferHandle
-from neuromta.ip.hardware.common.main_memory_config import MainMemoryConfig, HBM2Config
+from neuromta.common.context import Context
+from neuromta.common.custom_types import MemoryType
+from neuromta.common.buffer_handle import BufferHandle, CircularBufferHandle
+# from neuromta.common.main_memory_config import MainMemoryConfig, HBM2Config
 
 
-__all__ = ["MemoryContext", "MemoryOwnerCore"]
+__all__ = ["MemoryContext", "MainMemoryConfig", "MemoryOwnerCore"]
 
 
 class MemoryOwnerCore(Core):
@@ -19,6 +19,32 @@ class MemoryOwnerCore(Core):
         self.mem_seg_type = mem_seg_type
         self.mem_context = mem_context
         self.mem_seg_id = self.mem_context.add_new_mem_segment(self)
+        
+        
+class MainMemoryConfig:
+    def __init__(
+        self, 
+        
+        # Default: HBM2 Configuration
+        transfer_speed: int         = 1600, 
+        ch_io_width: int            = 1024, 
+        ch_num: int                 = 1, 
+        burst_len: int              = 256, 
+        is_ddr: bool                = True, 
+        processor_clock_freq: int   = parse_freq_str("1GHz"),
+    ):
+        self.transfer_speed         = transfer_speed    # transfer speed per pin (MT/s)
+        self.ch_io_width            = ch_io_width       # io channel width (bits)
+        self.ch_num                 = ch_num            # number of channels
+        self.burst_len              = burst_len         # burst length
+        self.is_ddr                 = is_ddr
+        self.processor_clock_freq   = processor_clock_freq
+        
+    def get_cycles(self, size: int) -> int:
+        self.transfer_speed_bytes = (self.transfer_speed * (2 ** 20) * self.ch_io_width * self.ch_num // 8)  # Byte/s
+        self.transfer_speed_per_cycles = self.transfer_speed_bytes / self.processor_clock_freq   # Byte/cycle
+        
+        return math.ceil(size / self.transfer_speed_per_cycles)
 
 
 class MemoryContext(Context):
@@ -33,7 +59,7 @@ class MemoryContext(Context):
         main_mem_base:      int = 0x10000000,
         main_mem_bank_num:  int = 8,
         main_mem_bank_size: int = parse_mem_cap_str("1GB"),
-        main_mem_config:    MainMemoryConfig = HBM2Config(),
+        main_mem_config:    MainMemoryConfig = MainMemoryConfig(),
         
         l1_mem_rd_latency_per_block: int = 1,
         l1_mem_wr_latency_per_block: int = 2,

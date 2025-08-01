@@ -414,6 +414,10 @@ class Core:
         
         self.use_cycle_model = True
         self.use_functional_model = True
+        
+    def change_sim_model_options(self, use_cycle_model: bool = None, use_functional_model: bool = None):
+        self.use_cycle_model = use_cycle_model if use_cycle_model is not None else self.use_cycle_model
+        self.use_functional_model = use_functional_model if use_functional_model is not None else self.use_functional_model
 
     def dispatch_kernel(self, kernel: CompiledKernel):
         if not isinstance(kernel, CompiledKernel):

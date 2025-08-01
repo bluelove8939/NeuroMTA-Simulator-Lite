@@ -1,8 +1,8 @@
 from neuromta.common.core import *
 from neuromta.common.parser_utils import parse_mem_cap_str
 
-from neuromta.ip.hardware.common.context import Context
-from neuromta.ip.hardware.common.synchronizer import TicketLock
+from neuromta.common.context import Context
+from neuromta.common.synchronizer import TicketLock
 
 
 __all__ = ['IcntNetworkContext', 'IcntNetworkCore', 'RouterCore']
@@ -14,8 +14,6 @@ class RouterCore(Core):
         
         self.coord = coord
         self.icnt_context = icnt_context
-        
-        # Initialization
         self.icnt_context.register_core_as_node(self.coord, self)
 
         
