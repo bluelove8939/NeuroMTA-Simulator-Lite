@@ -10,6 +10,13 @@ from neuromta.ip.hardware.core.memory import MemoryContext, parse_mem_cap_str
 from neuromta.ip.hardware.core.interconnect import IcntNetworkContext
 
 
+__all__ = [
+    "TenstorrentCoreType",
+    "TenstorrentCoreMap",
+    "TenstorrentDevice"
+]
+
+
 class TenstorrentCoreType(enum.Enum):
     EMPTY   = enum.auto()
     NPU     = enum.auto()
