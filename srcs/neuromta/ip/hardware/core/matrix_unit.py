@@ -21,6 +21,7 @@ class MXUConfig(dict):
         pe_arr_height: int = 32,
         pe_arr_width: int = 32,
         seq_len: int = 256,
+        dtype: np.dtype = np.float32,
         acc_dtype: np.dtype = np.float32,
         dataflow: MXUDataflow = MXUDataflow.OS,
         op_latency_per_byte: int = 1,
@@ -30,7 +31,8 @@ class MXUConfig(dict):
         self["pe_arr_height"] = pe_arr_height
         self["pe_arr_width"] = pe_arr_width
         self["seq_len"] = seq_len
-        self["acc_dtype"] = acc_dtype
+        self["dtype"] = np.dtype(dtype)
+        self["acc_dtype"] = np.dtype(acc_dtype)
         self["dataflow"] = dataflow
         self["op_latency_per_byte"] = op_latency_per_byte
         
@@ -58,6 +60,11 @@ class MXUContext:
         self._dataflow      = dataflow
         self.op_latency_per_byte = op_latency_per_byte
         
+        # Determine the tile shape
+        if self._dataflow == MXUDataflow.OS:
+            if self.seq_len != self.pe_arr_height:
+                raise Exception(f"[ERROR] The sequence length should be the same with the PE array height for OS dataflow (input output tile shape consistency)")
+        
         # Initialize registers
         self._pe_arr_regs: np.ndarray = np.zeros((self.pe_arr_height, self.pe_arr_width), dtype=self._acc_dtype)
         self._acc_regs:    np.ndarray = np.zeros((self.seq_len, self.pe_arr_width), dtype=self._acc_dtype) if self._dataflow == MXUDataflow.WS else None
@@ -65,8 +72,8 @@ class MXUContext:
     def get_preload_pe_arr_cycles(self) -> int:
         return self.pe_arr_width
     
-    def get_preload_acc_regs_cycles(self, partial_seq_len: int=None) -> int:
-        return self.seq_len if partial_seq_len is None else partial_seq_len
+    def get_preload_acc_regs_cycles(self) -> int:
+        return self.seq_len
     
     def get_execute_cycles(self) -> int:
         return self.seq_len * self.op_latency_per_byte * self.dtype.itemsize
@@ -74,8 +81,8 @@ class MXUContext:
     def get_flush_pe_arr_cycles(self) -> int:
         return self.pe_arr_width
     
-    def get_flush_acc_regs_cycles(self, partial_seq_len: int=None) -> int:
-        return self.seq_len if partial_seq_len is None else partial_seq_len
+    def get_flush_acc_regs_cycles(self) -> int:
+        return self.seq_len
     
     def get_pe_arr_regs(self) -> np.ndarray:
         return self._pe_arr_regs.copy()
@@ -91,18 +98,15 @@ class MXUContext:
         
         self._pe_arr_regs[:, :] = tile.astype(dtype=self._acc_dtype)
         
-    def load_tile_acc_regs(self, tile: np.ndarray, offset: int=0):
+    def load_tile_acc_regs(self, tile: np.ndarray):
         if self._acc_regs is None:
             raise Exception("[ERROR] Accumulator registers are not available in this dataflow.")
         if tile.shape != self.acc_regs_shape:
             raise Exception(f"[ERROR] Tile shape {tile.shape} does not match accumulator registers shape {self.acc_regs_shape}.")
-
-        st = offset
-        ed = offset + tile.shape[0]
         
-        self._acc_regs[st:ed, :] = tile.astype(dtype=self._acc_dtype)
+        self._acc_regs[:, :] = tile.astype(dtype=self._acc_dtype)
         
-    def execute_gemm(self, ifm_tile: np.ndarray, wgt_tile: np.ndarray=None) -> np.ndarray:
+    def execute_gemm(self, ifm_tile: np.ndarray, wgt_tile: np.ndarray=None, psum_tile: np.ndarray=None) -> np.ndarray:
         if self._dataflow == MXUDataflow.OS:
             if wgt_tile is None:
                 raise Exception("[ERROR] WGT tile must be provided for OS dataflow.")
@@ -117,8 +121,10 @@ class MXUContext:
                 raise Exception("[ERROR] WGT tile should not be provided for WS dataflow.")
             if ifm_tile.shape != self.ifm_tile_shape:
                 raise Exception(f"[ERROR] IFM tile shape {ifm_tile.shape} does not match expected shape {self.ifm_tile_shape}.")
+            if psum_tile is None:
+                psum_tile = self._acc_regs
             
-            self._acc_regs[:, :] = (ifm_tile @ self._pe_arr_regs) + self._acc_regs
+            self._acc_regs[:, :] = (ifm_tile @ self._pe_arr_regs) + psum_tile
         else:
             raise Exception(f"[ERROR] Unsupported MXU dataflow: {self._dataflow}.")
         

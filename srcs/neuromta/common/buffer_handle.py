@@ -1,4 +1,6 @@
+import numpy as np
 from typing import Any, Sequence
+
 from neuromta.common.synchronizer import TicketLock
 
 
@@ -10,13 +12,39 @@ __all__ = [
 ]
 
 
+# class PageHandle:
+#     def __init__(self, page_size: int):
+#         self.page_size = page_size
+#     def __str__(self):
+#         return f"Page(size={self.page_size})"
+    
+
 class PageHandle:
-    def __init__(self, page_size: int, content: Any):
-        self.page_size = page_size
-        self.content = content
+    def __init__(self, page_size: int=None, content: np.ndarray = None):
+        if page_size is None and content is None:
+            raise ValueError("Either page_size or content must be provided.")
+        elif page_size is None:
+            page_size = content.size * content.itemsize
+            content = content.reshape(-1).view(np.uint8)
+        elif content is None:
+            content = np.zeros(page_size, dtype=np.uint8)
         
+        self._page_size: int = page_size
+        self._content: np.ndarray = content
+    
+    def content_view(self, shape: tuple[int, ...], dtype: np.dtype = np.uint8) -> np.ndarray:
+        return self._content.view(dtype=dtype).reshape(shape)
+    
+    @property
+    def content(self) -> np.ndarray:
+        return self._content
+    
+    @property
+    def page_size(self) -> int:
+        return self._page_size
+    
     def __str__(self):
-        return f"Page(size={self.page_size}, content={self.content})"
+        return f"Page(size={self.page_size})"
 
 
 class BufferHandle:
@@ -26,7 +54,7 @@ class BufferHandle:
         self._page_size = page_size
         self._n_pages  = n_pages
         
-        self._pages = [PageHandle(self._page_size, None) for _ in range(self._n_pages)]
+        self._pages = [PageHandle(self._page_size) for _ in range(self._n_pages)]
         self._lock = TicketLock()
         
         if pages is not None:
@@ -36,7 +64,7 @@ class BufferHandle:
 
     def data_set_page(self, page_idx: int, page: PageHandle):
         if not isinstance(page, PageHandle):
-            page = PageHandle(self._page_size, page)
+            page = PageHandle(page_size=self._page_size, content=page)
         
         if 0 <= page_idx < self._n_pages:
             self._pages[page_idx] = page

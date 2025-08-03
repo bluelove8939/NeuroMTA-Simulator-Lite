@@ -1,13 +1,14 @@
+import math
 from neuromta.common.core import *
 
 from neuromta.common.custom_types import MemoryType
-from neuromta.common.buffer_handle import CircularBufferHandle, BufferHandle, TemporaryBufferHandle
+from neuromta.common.buffer_handle import CircularBufferHandle, BufferHandle, TemporaryBufferHandle, PageHandle
 from neuromta.common.synchronizer import TicketLock
 
 from neuromta.ip.hardware.core.memory import MemoryContext, MemoryOwnerCore
 from neuromta.ip.hardware.core.interconnect import IcntNetworkContext, IcntNetworkCore, RouterCore
 from neuromta.ip.hardware.core.dma import DMACore
-from neuromta.ip.hardware.core.vector_unit import VPUContext, VPUConfig
+from neuromta.ip.hardware.core.vector_unit import VPUContext, VPUConfig, VPUOperator
 from neuromta.ip.hardware.core.matrix_unit import MXUContext, MXUConfig, MXUDataflow
 
 
@@ -183,7 +184,7 @@ class NPUCore(MemoryOwnerCore, RouterCore):
         wgt_handle:  TemporaryBufferHandle, wgt_page_idx:  int, 
         psum_handle: TemporaryBufferHandle, psum_page_idx: int,
         ofm_handle:  TemporaryBufferHandle, ofm_page_idx:  int,
-        seq_len:           int  = 1,
+        streaming_n_tiles: int  = 1,
         skip_wgt_preload:  bool = False,
         skip_psum_preload: bool = False,
         skip_ofm_flush:    bool = False,
@@ -191,35 +192,24 @@ class NPUCore(MemoryOwnerCore, RouterCore):
         if not self._check_pid_is_locked_with(self.mxu_lock):
             return False
         
-        if not skip_psum_preload:
-            if self.mxu_context.dataflow == MXUDataflow.OS:
-                self._atom_mxu_preload_page_pe(psum_handle, psum_page_idx)
-            elif self.mxu_context.dataflow == MXUDataflow.WS:
-                n_pages = self.mxu_context.ofm_tile_size // psum_handle.page_size
-                partial_seq_len = psum_handle.page_size // (self.mxu_context.pe_arr_width * self.mxu_context.dtype.itemsize)
-                for i in range(n_pages): 
-                    self._atom_mxu_preload_page_acc(psum_handle, psum_page_idx, offset=i * partial_seq_len)
+    #########################################
+    # VPU: Vector Processing Unit
+    #########################################
+    
+    @core_command_method
+    def _atom_vpu_set_vector_reg(self, handle: TemporaryBufferHandle, page_idx: int, page_offset: int, vreg_idx: int, burst_len: int=1):
+        if not self._check_pid_is_locked_with(self.vpu_lock):
+            return False
         
-        if not skip_wgt_preload:
-            if self.mxu_context.dataflow == MXUDataflow.OS:
-                raise Exception("[ERROR] WGT preload is not supported in OS dataflow.")
-            elif self.mxu_context.dataflow == MXUDataflow.WS:
-                self._atom_mxu_preload_page_pe(wgt_handle, wgt_page_idx)
-                
-        for i in range(seq_len):
-            if self.mxu_context.dataflow == MXUDataflow.OS:
-                self._atom_mxu_execute_os(ifm_handle, ifm_page_idx + i, wgt_handle, wgt_page_idx + i)
-            elif self.mxu_context.dataflow == MXUDataflow.WS:
-                self._atom_mxu_execute_ws(ifm_handle, ifm_page_idx + i)
-                
-        if not skip_ofm_flush:
-            if self.mxu_context.dataflow == MXUDataflow.OS:
-                self._atom_mxu_flush_page_pe(ofm_handle, ofm_page_idx)
-            elif self.mxu_context.dataflow == MXUDataflow.WS:
-                n_pages = self.mxu_context.ofm_tile_size // ofm_handle.page_size
-                partial_seq_len = ofm_handle.page_size // (self.mxu_context.pe_arr_width * self.mxu_context.acc_dtype.itemsize)
-                for i in range(n_pages): 
-                    self._atom_mxu_flush_page_acc(ofm_handle, ofm_page_idx, offset=i * partial_seq_len)
+    @core_command_method
+    def _atom_vpu_get_vector_reg(self, handle: TemporaryBufferHandle, page_idx: int, page_offset: int, vreg_idx: int, burst_len: int=1):
+        if not self._check_pid_is_locked_with(self.vpu_lock):
+            return False
+        
+    @core_command_method
+    def _atom_vpu_execute_vector_reg(self, opcode: VPUOperator, vreg_a: int, vreg_b: int=None, vreg_dest: int=None, inplace: bool=False, burst_len: int=1):
+        if not self._check_pid_is_locked_with(self.vpu_lock):
+            return False
         
 class NPUCoreCycleModel(CoreCycleModel):
     def __init__(self, core: 'NPUCore'):
@@ -239,7 +229,7 @@ class NPUCoreCycleModel(CoreCycleModel):
         wgt_handle:  TemporaryBufferHandle, wgt_page_idx:  int, 
         psum_handle: TemporaryBufferHandle, psum_page_idx: int,
         ofm_handle:  TemporaryBufferHandle, ofm_page_idx:  int,
-        seq_len:           int  = 1,
+        streaming_n_tiles: int  = 1,
         skip_wgt_preload:  bool = False,
         skip_psum_preload: bool = False,
         skip_ofm_flush:    bool = False,
@@ -250,10 +240,7 @@ class NPUCoreCycleModel(CoreCycleModel):
             if self.core.mxu_context.dataflow == MXUDataflow.OS:
                 total_cycles += self.core.mxu_context.get_preload_pe_arr_cycles()
             elif self.core.mxu_context.dataflow == MXUDataflow.WS:
-                n_pages = self.core.mxu_context.ofm_tile_size // psum_handle.page_size
-                partial_seq_len = psum_handle.page_size // (self.core.mxu_context.pe_arr_width * self.core.mxu_context.dtype.itemsize)
-                for i in range(n_pages):
-                    total_cycles += self.core.mxu_context.get_preload_acc_regs_cycles(partial_seq_len)
+                raise Exception(f"[ERROR] PSUM preload is not supported in WS dataflow")
         
         if not skip_wgt_preload:
             if self.core.mxu_context.dataflow == MXUDataflow.OS:
@@ -261,19 +248,21 @@ class NPUCoreCycleModel(CoreCycleModel):
             elif self.core.mxu_context.dataflow == MXUDataflow.WS:
                 total_cycles += self.core.mxu_context.get_preload_pe_arr_cycles()
                 
-        for i in range(seq_len):
-            total_cycles += self.core.mxu_context.get_execute_cycles()
+        total_cycles += (self.core.mxu_context.get_execute_cycles() * streaming_n_tiles)
             
         if not skip_ofm_flush:
             if self.core.mxu_context.dataflow == MXUDataflow.OS:
-                total_cycles += self.core.mxu_context.get_flush_pe_arr_cycles(ofm_handle.page_size)
+                total_cycles += self.core.mxu_context.get_flush_pe_arr_cycles()
             elif self.core.mxu_context.dataflow == MXUDataflow.WS:
-                n_pages = self.core.mxu_context.ofm_tile_size // ofm_handle.page_size
-                partial_seq_len = ofm_handle.page_size // (self.core.mxu_context.pe_arr_width * self.core.mxu_context.acc_dtype.itemsize)
-                for i in range(n_pages): 
-                    total_cycles += self.core.mxu_context.get_flush_acc_regs_cycles(ofm_handle.page_size, offset=i * partial_seq_len)
+                total_cycles += self.core.mxu_context.get_flush_acc_regs_cycles() * streaming_n_tiles
                     
         return total_cycles
+    
+    def _atom_vpu_execute_vector_reg(self, opcode: VPUOperator, vreg_a: int, vreg_b: int=None, vreg_dest: int=None, inplace: bool=False, burst_len: int=1):
+        if opcode.is_unary:
+            return self.core.vpu_context.unary_op_latency * burst_len
+        else:
+            return self.core.vpu_context.arith_op_latency * burst_len
 
 class NPUCoreFunctionalModel(CoreFunctionalModel):
     def __init__(self, core: 'NPUCore'):
@@ -295,47 +284,146 @@ class NPUCoreFunctionalModel(CoreFunctionalModel):
         wgt_handle:  TemporaryBufferHandle, wgt_page_idx:  int, 
         psum_handle: TemporaryBufferHandle, psum_page_idx: int,
         ofm_handle:  TemporaryBufferHandle, ofm_page_idx:  int,
-        seq_len:           int  = 1,
+        streaming_n_tiles: int  = 1,
         skip_wgt_preload:  bool = False,
         skip_psum_preload: bool = False,
         skip_ofm_flush:    bool = False,
     ):  
         if not skip_psum_preload:
             if self.core.mxu_context.dataflow == MXUDataflow.OS:
-                self.core.mxu_context.load_tile_pe_arr(psum_handle.data_get_page(psum_page_idx))
+                self.core.mxu_context.load_tile_pe_arr(psum_handle.data_get_page(psum_page_idx).content_view(shape=(32, 32), dtype=self.core.mxu_context.acc_dtype))
             elif self.core.mxu_context.dataflow == MXUDataflow.WS:
-                n_pages = self.core.mxu_context.ofm_tile_size // psum_handle.page_size
-                partial_seq_len = psum_handle.page_size // (self.core.mxu_context.pe_arr_width * self.core.mxu_context.dtype.itemsize)
-                for i in range(n_pages):
-                    self.core.mxu_context.load_tile_acc_regs(psum_handle.data_get_page(psum_page_idx + i), offset=i * partial_seq_len)
-        
+                raise Exception(f"[ERROR] PSUM preload is not supported in WS dataflow")
+            
         if not skip_wgt_preload:
             if self.core.mxu_context.dataflow == MXUDataflow.OS:
                 raise Exception("[ERROR] WGT preload is not supported in OS dataflow.")
             elif self.core.mxu_context.dataflow == MXUDataflow.WS:
-                self.core.mxu_context.load_tile_pe_arr(wgt_handle.data_get_page(wgt_page_idx))
-
-        for i in range(seq_len):
-            if self.core.mxu_context.dataflow == MXUDataflow.OS:
-                ifm_tile = ifm_handle.data_get_page(ifm_page_idx + i)
-                wgt_tile = wgt_handle.data_get_page(wgt_page_idx + i)
-                self.core.mxu_context.execute_gemm(ifm_tile=ifm_tile, wgt_tile=wgt_tile)
-            elif self.core.mxu_context.dataflow == MXUDataflow.WS:
-                ifm_tile = ifm_handle.data_get_page(ifm_page_idx + i)
-                self.core.mxu_context.execute_gemm(ifm_tile=ifm_tile, wgt_tile=None)
+                self.core.mxu_context.load_tile_pe_arr(wgt_handle.data_get_page(wgt_page_idx).content_view(shape=(32, 32), dtype=self.core.mxu_context.dtype))
             
-        if not skip_ofm_flush:
-            if self.core.mxu_context.dataflow == MXUDataflow.OS:
+        if self.core.mxu_context.dataflow == MXUDataflow.OS:
+            for i in range(streaming_n_tiles):
+                if self.core.mxu_context.dataflow == MXUDataflow.OS:
+                    ifm_tile = ifm_handle.data_get_page(ifm_page_idx + i).content_view(shape=(32, 32), dtype=self.core.mxu_context.dtype)
+                    wgt_tile = wgt_handle.data_get_page(wgt_page_idx + i).content_view(shape=(32, 32), dtype=self.core.mxu_context.dtype)
+                    self.core.mxu_context.execute_gemm(ifm_tile=ifm_tile, wgt_tile=wgt_tile, psum_tile=None)
+            
+            if not skip_ofm_flush:
                 ofm_tile = self.core.mxu_context.get_pe_arr_regs()
                 ofm_handle.data_set_page(ofm_page_idx, ofm_tile)
-            elif self.core.mxu_context.dataflow == MXUDataflow.WS:
-                n_pages = self.core.mxu_context.ofm_tile_size // ofm_handle.page_size
-                partial_seq_len = ofm_handle.page_size // (self.core.mxu_context.pe_arr_width * self.core.mxu_context.acc_dtype.itemsize)
-                ofm_tile = self.core.mxu_context.get_acc_regs()
-                for i in range(n_pages):          
-                    paged_ofm_tile = ofm_tile[i * partial_seq_len: (i + 1) * partial_seq_len, :]           
-                    ofm_handle.data_set_page(ofm_page_idx + i, paged_ofm_tile)
+        elif self.core.mxu_context.dataflow == MXUDataflow.WS:
+            for i in range(streaming_n_tiles):
+                ifm_tile = ifm_handle.data_get_page(ifm_page_idx + i).content_view(shape=(32, 32), dtype=self.core.mxu_context.dtype)
+                psum_tile = psum_handle.data_get_page(psum_page_idx + i).content_view(shape=(32, 32), dtype=self.core.mxu_context.acc_dtype)
+                self.core.mxu_context.execute_gemm(ifm_tile=ifm_tile, wgt_tile=None, psum_tile=psum_tile)
+                
+                if not skip_ofm_flush:
+                    if streaming_n_tiles > 1:
+                        raise Exception(f"[ERROR] It is impossible to skip OFM flush with WS dataflow when the number of streaming tiles is larger than 1")
+                
+                    ofm_tile = self.core.mxu_context.get_acc_regs()
+                    ofm_handle.data_set_page(ofm_page_idx + i, ofm_tile)
+                    
+    def _atom_vpu_set_vector_reg(self, handle: TemporaryBufferHandle, page_idx: int, page_offset: int, vreg_idx: int, burst_len: int=1):
+        for i in range(burst_len):
+            st = page_offset + i * self.core.vpu_context.vlen
+            ed = page_offset + (i + 1) * self.core.vpu_context.vlen
+            vreg_data = handle.data_get_page(page_idx).content_view(shape=(-1,), dtype=self.core.vpu_context.vdtype)[st:ed]
+            self.core.vpu_context.set_vector_reg(vreg_idx + i, vreg_data)
+        
+    def _atom_vpu_get_vector_reg(self, handle: TemporaryBufferHandle, page_idx: int, page_offset: int, vreg_idx: int, burst_len: int=1):
+        for i in range(burst_len):
+            st = page_offset + i * self.core.vpu_context.vlen
+            ed = page_offset + (i + 1) * self.core.vpu_context.vlen
+            vreg_data = self.core.vpu_context.get_vector_reg(vreg_idx + i)
+            page = handle.data_get_page(page_idx)
+            page.content_view(shape=(-1,), dtype=self.core.vpu_context.vdtype)[st:ed] = vreg_data
 
+    def _atom_vpu_execute_vector_reg(self, opcode: VPUOperator, vreg_a: int, vreg_b: int=None, vreg_dest: int=None, inplace: bool=False, burst_len: int=1):
+        for i in range(burst_len):
+            vra = vreg_a + i
+            vrb = vreg_b + i if vreg_b is not None else None
+            vrd = vreg_dest + i if vreg_dest is not None else None
+            self.core.vpu_context.execute_vector_op(opcode, vra, vrb, vrd, inplace=inplace)
+        
+if __name__ == "__main__":
+    import numpy as np
+    
+    from neuromta.common.parser_utils import parse_mem_cap_str
+    from neuromta.common.device import Device
+    
+    class MyDevice(Device):
+        def __init__(self):
+            super().__init__()
+            
+            self.mem_context = MemoryContext()
+            self.icnt_context = IcntNetworkContext(grid_shape=(4, 4))
+            self.mxu_config = MXUConfig(pe_arr_height=32, pe_arr_width=32, seq_len=32, dtype=np.int32, acc_dtype=np.int32, dataflow=MXUDataflow.OS, op_latency_per_byte=1)
+            self.vpu_config = VPUConfig(vreg_len=parse_mem_cap_str("128B"), vreg_num=32, vdtype=np.int32, vlen_max=1024, vlen_min=32)
+
+            self.npu_core = NPUCore(coord=(0, 0), mem_context=self.mem_context, icnt_context=self.icnt_context, mxu_config=self.mxu_config, vpu_config=self.vpu_config)
+            self.dma_core = DMACore(coord=(0, 1), mem_context=self.mem_context, icnt_context=self.icnt_context)
+            self.icnt_core = IcntNetworkCore(icnt_context=self.icnt_context)
+            
+    device = MyDevice()
+    device.initialize(create_trace=False)
+    device.change_sim_model_options(use_cycle_model=True, use_functional_model=True)
+    
+    device.npu_core.vpu_context.reconfigure_vector_reg_file(vlen=32, vdtype=np.int32)
+    
+    ifm = np.arange(0, 32*32, 1).astype(np.int32).reshape((32, 32))
+    wgt = np.arange(0, 32*32, 1).astype(np.int32).reshape((32, 32))
+    psum = np.arange(0, 32*32, 1).astype(np.int32).reshape((32, 32))
+    
+    ifm_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(content=ifm),])
+    wgt_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(content=wgt),])
+    psum_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(content=psum),])
+    ofm_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(page_size=32*32*4),])
+    
+    @core_kernel_method
+    def example_tiled_gemm_kernel(
+        core: NPUCore,
+        ifm_handle:  TemporaryBufferHandle, ifm_page_idx:  int, 
+        wgt_handle:  TemporaryBufferHandle, wgt_page_idx:  int, 
+        psum_handle: TemporaryBufferHandle, psum_page_idx: int,
+        ofm_handle:  TemporaryBufferHandle, ofm_page_idx:  int,
+    ):
+        core._atom_acquire_mxu_lock()
+        core._atom_mxu_tiled_gemm(
+            ifm_handle, ifm_page_idx, 
+            wgt_handle, wgt_page_idx, 
+            psum_handle, psum_page_idx, 
+            ofm_handle, ofm_page_idx,
+            1, True, False, False
+        )
+        core._atom_release_mxu_lock()
+        
+        core._atom_acquire_vpu_lock()
+        core._atom_vpu_set_vector_reg(ifm_handle, 0, 0, 0, 1)
+        core._atom_vpu_set_vector_reg(wgt_handle, 0, 0, 1, 1)
+        core._atom_vpu_execute_vector_reg(VPUOperator.ADD, 0, 1, 2, inplace=False, burst_len=1)
+        core._atom_vpu_get_vector_reg(ofm_handle, 0, 0, 2, burst_len=1)
+        core._atom_release_vpu_lock()
+        
+    example_tiled_gemm_kernel(device.npu_core, ifm_handle, 0, wgt_handle, 0, psum_handle, 0, ofm_handle, 0)
+    
+    device.verbose = True   # print debug messages
+    device.run_kernels()
+    
+    reference = (ifm @ wgt) + psum
+    reference[0, :] = ifm[0, :] + wgt[0, :]  # Simulate the VPU operation
+    
+    simulated = ofm_handle.data_get_page(0).content
+    
+    print("\n=== REFERENCE RESULT ===")
+    print(reference)
+    
+    print("\n=== FUNCTIONAL SIMULATION RESULT ===")
+    print(simulated)
+    
+    print(f"\nfunctional simulation validated: {np.allclose(reference, simulated)}")
+    
+    
         
 # if __name__ == "__main__":
 #     import numpy as np

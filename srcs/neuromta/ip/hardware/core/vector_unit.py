@@ -1,3 +1,4 @@
+import enum
 import numpy as np
 
 from neuromta.common.parser_utils import parse_mem_cap_str
@@ -5,6 +6,7 @@ from neuromta.common.parser_utils import parse_mem_cap_str
 
 __all__ = [
     "VPUConfig",
+    "VPUOperator",
     "VPUContext",
 ]
 
@@ -35,6 +37,19 @@ class VPUConfig(dict):
         
     def create_context(self) -> "VPUContext":
         return VPUContext(**self)
+    
+
+class VPUOperator(enum.Enum):
+    ADD = enum.auto()
+    SUB = enum.auto()
+    MUL = enum.auto()
+    DIV = enum.auto()
+    
+    RELU = enum.auto()
+    
+    @property
+    def is_unary(self) -> bool:
+        return self in (VPUOperator.RELU,)
 
 
 class VPUContext:
@@ -77,7 +92,7 @@ class VPUContext:
             
         self._vdtype    = np.dtype(vdtype)
         self._vlen      = vlen
-        self._n_vregs   = self._physical_vreg_len // (self._vlen * self._vdtype.itemsize)
+        self._n_vregs   = self._physical_vreg_len // (self._vlen * self._vdtype.itemsize) * self._physical_vreg_num
         
         self._vreg_view = self._physical_vrf.view(dtype=self._vdtype).reshape(self._n_vregs, self._vlen)
         
@@ -98,6 +113,36 @@ class VPUContext:
             raise Exception(f"[ERROR] Vector register index {vreg_idx} out of bounds (0, {self._n_vregs}).")
         
         return self._vreg_view[vreg_idx, :].copy()
+    
+    def execute_vector_op(self, opcode: VPUOperator, vreg_a: int, vreg_b: int=None, vreg_dest: int=None, inplace: bool=False) -> None:     
+        if inplace:
+            vreg_dest = vreg_a
+        
+        if opcode.is_unary:
+            is_unary = True
+            vreg_b = 0
+        else:
+            is_unary = False
+        
+        if vreg_a < 0 or vreg_a >= self._n_vregs:
+            raise Exception(f"[ERROR] Vector register index {vreg_a} out of bounds (0, {self._n_vregs}).")
+        if not is_unary and vreg_b is None:
+            raise Exception(f"[ERROR] Vector register B must be provided for binary operations.")
+        elif vreg_b < 0 or vreg_b >= self._n_vregs:
+            raise Exception(f"[ERROR] Vector register index {vreg_b} out of bounds (0, {self._n_vregs}).")
+        if vreg_dest is not None and (vreg_dest < 0 or vreg_dest >= self._n_vregs):
+            raise Exception(f"[ERROR] Vector register index {vreg_dest} out of bounds (0, {self._n_vregs}).")
+
+        if opcode == VPUOperator.ADD:
+            self._vreg_view[vreg_dest, :] = self._vreg_view[vreg_a, :] + self._vreg_view[vreg_b, :]
+        elif opcode == VPUOperator.SUB:
+            self._vreg_view[vreg_dest, :] = self._vreg_view[vreg_a, :] - self._vreg_view[vreg_b, :]
+        elif opcode == VPUOperator.MUL:
+            self._vreg_view[vreg_dest, :] = self._vreg_view[vreg_a, :] * self._vreg_view[vreg_b, :]
+        elif opcode == VPUOperator.DIV:
+            self._vreg_view[vreg_dest, :] = self._vreg_view[vreg_a, :] / self._vreg_view[vreg_b, :]
+        elif opcode == VPUOperator.RELU:
+            np.maximum(self._vreg_view[vreg_a, :], 0, out=self._vreg_view[vreg_dest, :])
 
     @property
     def vdtype(self) -> np.dtype:
