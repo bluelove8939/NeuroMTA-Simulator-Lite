@@ -1,13 +1,13 @@
 import enum
-import numpy as np
+import torch
 
 from neuromta.common.device import Device
 
-from neuromta.ip.hardware.core.npu import NPUCore, DMACore, IcntNetworkCore
-from neuromta.ip.hardware.core.matrix_unit import MXUConfig, MXUDataflow
-from neuromta.ip.hardware.core.vector_unit import VPUConfig, VPUOperator
-from neuromta.ip.hardware.core.memory import MemoryContext, parse_mem_cap_str
-from neuromta.ip.hardware.core.interconnect import IcntNetworkContext
+from neuromta.ip.hardware.npu import NPUCore, DMACore, IcntNetworkCore
+from neuromta.ip.hardware.matrix_unit import MXUConfig, MXUDataflow
+from neuromta.ip.hardware.vector_unit import VPUConfig, VPUOperator
+from neuromta.ip.hardware.memory import MemoryContext, parse_mem_cap_str
+from neuromta.ip.hardware.interconnect import IcntNetworkContext
 
 
 __all__ = [
@@ -21,25 +21,35 @@ class TenstorrentCoreType(enum.Enum):
     EMPTY   = enum.auto()
     NPU     = enum.auto()
     DMA     = enum.auto()
+    
+    @classmethod
+    def is_valid_core_type(cls, core_type: 'TenstorrentCoreType') -> bool:
+        if isinstance(core_type, int):
+            core_type = TenstorrentCoreType(core_type)
+        return core_type in cls
 
 
 class TenstorrentCoreMap:
-    def __init__(self, grid: np.ndarray[int]):
+    def __init__(self, grid: torch.Tensor):
         self._grid = grid
         
+        for core_type in TenstorrentCoreType:
+            if not TenstorrentCoreType.is_valid_core_type(core_type):
+                raise TypeError(f"The core type {core_type} is not a valid Tenstorrent core type.")
+        
     def core_coord(self, core_type: TenstorrentCoreType) -> tuple[int, int]:
-        coords = np.argwhere(self._grid == core_type.value)
+        coords = torch.argwhere(self._grid == core_type.value)
         if coords.size == 0:
             raise ValueError(f"No core of type {core_type} found in the core map.")
         return tuple(map(tuple, coords.tolist()))
         
     @classmethod
     def from_shape(cls, shape: tuple[int, int]) -> 'TenstorrentCoreMap':
-        core_map = np.full(shape, TenstorrentCoreType.EMPTY.value, dtype=int)
+        core_map = torch.full(shape, TenstorrentCoreType.EMPTY.value, dtype=int)
         return cls(core_map)
     
     @property
-    def grid(self) -> np.ndarray[int]:
+    def grid(self) -> torch.Tensor:
         return self._grid
 
 
@@ -49,8 +59,8 @@ class TenstorrentDevice(Device):
         
         self.mem_context = MemoryContext()
         self.icnt_context = IcntNetworkContext(grid_shape=core_map.grid.shape)
-        self.mxu_config = MXUConfig(pe_arr_height=32, pe_arr_width=32, seq_len=32, dtype=np.int32, acc_dtype=np.int32, dataflow=MXUDataflow.OS, op_latency_per_byte=1)
-        self.vpu_config = VPUConfig(vreg_len=parse_mem_cap_str("128B"), vreg_num=32, vdtype=np.int32, vlen_max=1024, vlen_min=32)
+        self.mxu_config = MXUConfig(pe_arr_height=32, pe_arr_width=32, seq_len=32, dtype=torch.int32, acc_dtype=torch.int32, dataflow=MXUDataflow.OS, op_latency_per_byte=1)
+        self.vpu_config = VPUConfig(vreg_len=parse_mem_cap_str("128B"), vreg_num=32, vdtype=torch.int32, vlen_max=1024, vlen_min=32)
 
         self.npu_cores: list[NPUCore] = [
             NPUCore(coord=coord, mem_context=self.mem_context, icnt_context=self.icnt_context, mxu_config=self.mxu_config, vpu_config=self.vpu_config)
@@ -66,9 +76,11 @@ class TenstorrentDevice(Device):
         
 
 if __name__ == "__main__":
-    core_map = TenstorrentCoreMap.from_shape((4, 4))
-    core_map.grid[0,  :] = TenstorrentCoreType.DMA.value
-    core_map.grid[1:, :] = TenstorrentCoreType.NPU.value
+    core_map = TenstorrentCoreMap.from_shape((10, 10))
+    core_map.grid[:, 0   ] = TenstorrentCoreType.DMA.value
+    core_map.grid[:, 5   ] = TenstorrentCoreType.DMA.value
+    core_map.grid[:, 1:5 ] = TenstorrentCoreType.NPU.value
+    core_map.grid[:, 6:10] = TenstorrentCoreType.NPU.value
     
     print(core_map.grid)
     

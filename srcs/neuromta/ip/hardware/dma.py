@@ -5,8 +5,8 @@ from neuromta.common.core import *
 from neuromta.common.custom_types import MemoryType
 from neuromta.common.buffer_handle import CircularBufferHandle, BufferHandle
 
-from neuromta.ip.hardware.core.memory import MemoryContext, MemoryOwnerCore
-from neuromta.ip.hardware.core.interconnect import IcntNetworkContext, RouterCore
+from neuromta.ip.hardware.memory import MemoryContext, MemoryOwnerCore
+from neuromta.ip.hardware.interconnect import IcntNetworkContext, RouterCore
 
 
 __all__ = ['DMACore']
@@ -92,9 +92,9 @@ class DMACoreFunctionalModel(CoreFunctionalModel):
         self.core = core
         
     def _atom_dma_read(self, src_handle: BufferHandle, src_page_idx: int, tmp_dst_handle: BufferHandle, tmp_dst_page_idx: int, n_pages: int):
-        pages = src_handle.data_get_page_burst(src_page_idx, n_pages)
-        tmp_dst_handle.data_set_page_burst(tmp_dst_page_idx, pages)
+        pages = src_handle.get_page_burst(src_page_idx, n_pages)
+        tmp_dst_handle.add_page_burst(tmp_dst_page_idx, pages)
         
     def _atom_dma_write(self, dst_handle: BufferHandle, dst_page_idx: int, tmp_src_handle: BufferHandle, tmp_src_page_idx: int, n_pages: int):
-        pages = tmp_src_handle.data_get_page_burst(tmp_src_page_idx, n_pages)
-        dst_handle.data_set_page_burst(dst_page_idx, pages)
+        pages = tmp_src_handle.get_page_burst(tmp_src_page_idx, n_pages)
+        dst_handle.add_page_burst(dst_page_idx, pages)

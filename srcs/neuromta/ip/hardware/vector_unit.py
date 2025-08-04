@@ -1,5 +1,5 @@
 import enum
-import numpy as np
+import torch
 
 from neuromta.common.parser_utils import parse_mem_cap_str
 
@@ -17,7 +17,7 @@ class VPUConfig(dict):
         
         vreg_len: int = parse_mem_cap_str("128B"),
         vreg_num: int = 32,
-        vdtype: np.dtype = np.float32,
+        vdtype: torch.dtype = torch.float32,
         
         vlen_max: int = 1024,
         vlen_min: int = 32,
@@ -29,7 +29,7 @@ class VPUConfig(dict):
         
         self["vreg_len"] = vreg_len
         self["vreg_num"] = vreg_num
-        self["vdtype"] = np.dtype(vdtype)
+        self["vdtype"]   = vdtype
         self["vlen_max"] = vlen_max
         self["vlen_min"] = vlen_min
         self["unary_op_latency"] = unary_op_latency
@@ -58,7 +58,7 @@ class VPUContext:
         
         vreg_len: int = parse_mem_cap_str("128B"),
         vreg_num: int = 32,
-        vdtype: np.dtype = np.float32,
+        vdtype: torch.dtype = torch.float32,
         
         vlen_max: int = 1024,
         vlen_min: int = 32,
@@ -74,45 +74,45 @@ class VPUContext:
 
         self.unary_op_latency = unary_op_latency
         self.arith_op_latency = arith_op_latency
-        
-        self._physical_vrf: np.ndarray = np.zeros((self._physical_vreg_num * self._physical_vreg_len,), dtype=np.uint8)
-        
-        self._vdtype:   np.dtype    = np.dtype(vdtype)
+
+        self._physical_vrf: torch.Tensor = torch.zeros((self._physical_vreg_num * self._physical_vreg_len,), dtype=torch.uint8)
+
+        self._vdtype:   torch.dtype = vdtype
         self._vlen:     int         = self._physical_vreg_len // self._vdtype.itemsize
         self._n_vregs:  int         = self._physical_vreg_num
         
-        self._vreg_view:    np.ndarray = self._physical_vrf.view(dtype=self._vdtype).reshape(self._n_vregs, self._vlen)
+        self._vreg_view:    torch.Tensor = self._physical_vrf.view(dtype=self._vdtype).reshape(self._n_vregs, self._vlen)
 
-    def reconfigure_vector_reg_file(self, vlen: int, vdtype: np.dtype):
+    def reconfigure_vector_reg_file(self, vlen: int, vdtype: torch.dtype):
         if isinstance(vdtype, str):
-            vdtype = np.dtype(vdtype)
+            vdtype = torch.dtype(vdtype)
             
         if vlen < self.vlen_min or vlen > self.vlen_max:
             raise Exception(f"[ERROR] Vector length {vlen} is out of bounds ({self.vlen_min}, {self.vlen_max}).")
             
-        self._vdtype    = np.dtype(vdtype)
+        self._vdtype    = vdtype
         self._vlen      = vlen
         self._n_vregs   = self._physical_vreg_len // (self._vlen * self._vdtype.itemsize) * self._physical_vreg_num
         
         self._vreg_view = self._physical_vrf.view(dtype=self._vdtype).reshape(self._n_vregs, self._vlen)
         
-    def set_vector_reg(self, vreg_idx: int, data: np.ndarray):
-        if not isinstance(data, np.ndarray):
+    def set_vector_reg(self, vreg_idx: int, data: torch.Tensor):
+        if not isinstance(data, torch.Tensor):
             raise Exception("[ERROR] Data must be a numpy array.")
         if data.dtype != self._vdtype:
             raise Exception(f"[ERROR] Data type {data.dtype} does not match vector register type {self._vdtype}.")
-        if data.size != self._vlen:
-            raise Exception(f"[ERROR] Data size {data.size} does not match vector length {self._vlen}.")
+        if len(data.flatten()) != self._vlen:
+            raise Exception(f"[ERROR] Data size {data.size()} does not match vector length {self._vlen}.")
         if vreg_idx < 0 or vreg_idx >= self._n_vregs:
             raise Exception(f"[ERROR] Vector register index {vreg_idx} out of bounds (0, {self._n_vregs}).")
 
         self._vreg_view[vreg_idx, :] = data
         
-    def get_vector_reg(self, vreg_idx: int) -> np.ndarray:
+    def get_vector_reg(self, vreg_idx: int) -> torch.Tensor:
         if vreg_idx < 0 or vreg_idx >= self._n_vregs:
             raise Exception(f"[ERROR] Vector register index {vreg_idx} out of bounds (0, {self._n_vregs}).")
         
-        return self._vreg_view[vreg_idx, :].copy()
+        return self._vreg_view[vreg_idx, :].clone()
     
     def execute_vector_op(self, opcode: VPUOperator, vreg_a: int, vreg_b: int=None, vreg_dest: int=None, inplace: bool=False) -> None:     
         if inplace:
@@ -142,10 +142,10 @@ class VPUContext:
         elif opcode == VPUOperator.DIV:
             self._vreg_view[vreg_dest, :] = self._vreg_view[vreg_a, :] / self._vreg_view[vreg_b, :]
         elif opcode == VPUOperator.RELU:
-            np.maximum(self._vreg_view[vreg_a, :], 0, out=self._vreg_view[vreg_dest, :])
+            torch.maximum(self._vreg_view[vreg_a, :], 0, out=self._vreg_view[vreg_dest, :])
 
     @property
-    def vdtype(self) -> np.dtype:
+    def vdtype(self) -> torch.dtype:
         return self._vdtype
     
     @property

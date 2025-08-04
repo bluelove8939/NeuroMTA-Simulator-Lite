@@ -1,5 +1,5 @@
 import enum
-import numpy as np
+import torch
 
 
 __all__ = [
@@ -21,8 +21,8 @@ class MXUConfig(dict):
         pe_arr_height: int = 32,
         pe_arr_width: int = 32,
         seq_len: int = 256,
-        dtype: np.dtype = np.float32,
-        acc_dtype: np.dtype = np.float32,
+        dtype: torch.dtype = torch.float32,
+        acc_dtype: torch.dtype = torch.float32,
         dataflow: MXUDataflow = MXUDataflow.OS,
         op_latency_per_byte: int = 1,
     ):
@@ -31,8 +31,8 @@ class MXUConfig(dict):
         self["pe_arr_height"] = pe_arr_height
         self["pe_arr_width"] = pe_arr_width
         self["seq_len"] = seq_len
-        self["dtype"] = np.dtype(dtype)
-        self["acc_dtype"] = np.dtype(acc_dtype)
+        self["dtype"] = dtype
+        self["acc_dtype"] = acc_dtype
         self["dataflow"] = dataflow
         self["op_latency_per_byte"] = op_latency_per_byte
         
@@ -47,16 +47,16 @@ class MXUContext:
         pe_arr_height: int = 32,
         pe_arr_width: int = 32,
         seq_len: int = 256,
-        dtype: np.dtype = np.float32,
-        acc_dtype: np.dtype = np.float32,
+        dtype: torch.dtype = torch.float32,
+        acc_dtype: torch.dtype = torch.float32,
         dataflow: MXUDataflow = MXUDataflow.OS,
         op_latency_per_byte: int = 1,
     ):
         self.pe_arr_height  = pe_arr_height
         self.pe_arr_width   = pe_arr_width
         self.seq_len        = seq_len
-        self._dtype         = np.dtype(dtype)
-        self._acc_dtype     = np.dtype(acc_dtype)
+        self._dtype         = dtype
+        self._acc_dtype     = acc_dtype
         self._dataflow      = dataflow
         self.op_latency_per_byte = op_latency_per_byte
         
@@ -66,9 +66,9 @@ class MXUContext:
                 raise Exception(f"[ERROR] The sequence length should be the same with the PE array height for OS dataflow (input output tile shape consistency)")
         
         # Initialize registers
-        self._pe_arr_regs: np.ndarray = np.zeros((self.pe_arr_height, self.pe_arr_width), dtype=self._acc_dtype)
-        self._acc_regs:    np.ndarray = np.zeros((self.seq_len, self.pe_arr_width), dtype=self._acc_dtype) if self._dataflow == MXUDataflow.WS else None
-        
+        self._pe_arr_regs: torch.Tensor = torch.zeros((self.pe_arr_height, self.pe_arr_width), dtype=self._acc_dtype)
+        self._acc_regs:    torch.Tensor = torch.zeros((self.seq_len, self.pe_arr_width), dtype=self._acc_dtype) if self._dataflow == MXUDataflow.WS else None
+
     def get_preload_pe_arr_cycles(self) -> int:
         return self.pe_arr_width
     
@@ -83,30 +83,29 @@ class MXUContext:
     
     def get_flush_acc_regs_cycles(self) -> int:
         return self.seq_len
-    
-    def get_pe_arr_regs(self) -> np.ndarray:
-        return self._pe_arr_regs.copy()
-    
-    def get_acc_regs(self) -> np.ndarray:
+
+    def get_pe_arr_regs(self) -> torch.Tensor:
+        return self._pe_arr_regs.clone()
+
+    def get_acc_regs(self) -> torch.Tensor:
         if self._acc_regs is None:
             return self.get_pe_arr_regs()
-        return self._acc_regs.copy()
+        return self._acc_regs.clone()
     
-    def load_tile_pe_arr(self, tile: np.ndarray):
+    def load_tile_pe_arr(self, tile: torch.Tensor):
         if tile.shape != self.pe_arr_shape:
             raise Exception(f"[ERROR] Tile shape {tile.shape} does not match PE array shape {(self.pe_arr_height, self.pe_arr_width)}.")
         
-        self._pe_arr_regs[:, :] = tile.astype(dtype=self._acc_dtype)
+        self._pe_arr_regs[:, :] = tile.to(dtype=self._acc_dtype)
         
-    def load_tile_acc_regs(self, tile: np.ndarray):
+    def load_tile_acc_regs(self, tile: torch.Tensor):
         if self._acc_regs is None:
             raise Exception("[ERROR] Accumulator registers are not available in this dataflow.")
         if tile.shape != self.acc_regs_shape:
             raise Exception(f"[ERROR] Tile shape {tile.shape} does not match accumulator registers shape {self.acc_regs_shape}.")
-        
-        self._acc_regs[:, :] = tile.astype(dtype=self._acc_dtype)
-        
-    def execute_gemm(self, ifm_tile: np.ndarray, wgt_tile: np.ndarray=None, psum_tile: np.ndarray=None) -> np.ndarray:
+        self._acc_regs[:, :] = tile.to(dtype=self._acc_dtype)
+
+    def execute_gemm(self, ifm_tile: torch.Tensor, wgt_tile: torch.Tensor=None, psum_tile: torch.Tensor=None) -> torch.Tensor:
         if self._dataflow == MXUDataflow.OS:
             if wgt_tile is None:
                 raise Exception("[ERROR] WGT tile must be provided for OS dataflow.")
@@ -131,18 +130,18 @@ class MXUContext:
     def flush_pe_arr(self):
         self._pe_arr_regs[:, :] = 0
         
-    def flush_acc_regs(self) -> np.ndarray:
+    def flush_acc_regs(self) -> torch.Tensor:
         if self._acc_regs is None:
             raise Exception("[ERROR] Accumulator registers are not available in this dataflow.")
         
         self._acc_regs[:, :] = 0
         
     @property
-    def acc_dtype(self) -> np.dtype:
+    def acc_dtype(self) -> torch.dtype:
         return self._acc_dtype
     
     @property
-    def dtype(self) -> np.dtype:
+    def dtype(self) -> torch.dtype:
         return self._dtype
     
     @property
