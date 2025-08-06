@@ -105,7 +105,7 @@ class IcntNetworkCore(Core):
         
     @core_command_method
     def acquire_router_lock(self, coord: tuple[int, int]):
-        pid = get_global_context()
+        pid = get_global_pid()
         lock = self.icnt_context.get_router_lock(coord)
 
         if not lock.is_acquired_with(key=pid):
@@ -113,7 +113,7 @@ class IcntNetworkCore(Core):
             
     @core_command_method
     def release_router_lock(self, coord: tuple[int, int]):
-        pid = get_global_context()
+        pid = get_global_pid()
         lock = self.icnt_context.get_router_lock(coord)
         
         if lock.is_locked_with(key=pid):
@@ -121,7 +121,7 @@ class IcntNetworkCore(Core):
     
     @core_command_method
     def send_control_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int]):
-        pid = get_global_context()
+        pid = get_global_pid()
         lock = self.icnt_context.get_router_lock(src_coord)
         
         if not lock.is_locked_with(key=pid):
@@ -129,7 +129,7 @@ class IcntNetworkCore(Core):
         
     @core_command_method
     def send_data_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
-        pid = get_global_context()
+        pid = get_global_pid()
         lock = self.icnt_context.get_router_lock(src_coord)
         
         if not lock.is_locked_with(key=pid):

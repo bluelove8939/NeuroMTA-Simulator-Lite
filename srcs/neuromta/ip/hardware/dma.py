@@ -35,13 +35,13 @@ class DMACore(MemoryOwnerCore, RouterCore):
     
     @core_command_method
     def _atom_acquire_buffer_lock(self, handle: BufferHandle | CircularBufferHandle | str):
-        pid = get_global_context()
+        pid = get_global_pid()
         if not handle.lock.is_acquired_with(key=pid):
             handle.lock.acquire(key=pid)
         
     @core_command_method
     def _atom_release_buffer_lock(self, handle: BufferHandle | CircularBufferHandle | str):
-        pid = get_global_context()
+        pid = get_global_pid()
         if handle.lock.is_locked_with(key=pid):
             handle.lock.release(key=pid)
 
@@ -51,13 +51,13 @@ class DMACore(MemoryOwnerCore, RouterCore):
         
     @core_command_method
     def _atom_dma_read(self, src_handle: BufferHandle, src_page_idx: int, tmp_dst_handle: BufferHandle, tmp_dst_page_idx: int, n_pages: int):
-        pid = get_global_context()
+        pid = get_global_pid()
         if not src_handle.lock.is_locked_with(key=pid):
             return False
     
     @core_command_method
     def _atom_dma_write(self, dst_handle: BufferHandle, dst_page_idx: int, tmp_src_handle: BufferHandle, tmp_src_page_idx: int, n_pages: int):
-        pid = get_global_context()
+        pid = get_global_pid()
         if not dst_handle.lock.is_locked_with(key=pid):
             return False
         

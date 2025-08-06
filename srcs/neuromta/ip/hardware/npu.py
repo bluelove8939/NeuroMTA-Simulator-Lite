@@ -47,17 +47,17 @@ class NPUCore(MemoryOwnerCore, RouterCore):
     #######################################
     
     def _acquire_ambiguous_lock(self, lock: TicketLock):
-        pid = get_global_context()
+        pid = get_global_pid()
         if not lock.is_acquired_with(key=pid):
             lock.acquire(key=pid)
             
     def _release_ambiguous_lock(self, lock: TicketLock):
-        pid = get_global_context()
+        pid = get_global_pid()
         if lock.is_locked_with(key=pid):
             lock.release(key=pid)
             
     def _check_pid_is_locked_with(self, lock: TicketLock):
-        pid = get_global_context()
+        pid = get_global_pid()
         return lock.is_locked_with(key=pid)
     
     @core_command_method
@@ -110,7 +110,11 @@ class NPUCore(MemoryOwnerCore, RouterCore):
             
     @core_kernel_method
     def copy_page(self, src_handle: BufferHandle, src_page_idx: int, dst_handle: BufferHandle, dst_page_idx: int, n_pages: int):
-        if self.mem_context.check_l1_mem_addr(src_handle.addr):
+        if isinstance(src_handle, TemporaryBufferHandle):
+            src_core_id = None
+            src_core = None
+            src_coord = None
+        elif self.mem_context.check_l1_mem_addr(src_handle.addr):
             src_core_id, _, _ = self.mem_context.parse_l1_mem_addr(src_handle.addr)
             src_core: NPUCore = self.mem_context.get_owner(MemoryType.L1, src_core_id)
             src_coord = src_core.coord
@@ -118,8 +122,12 @@ class NPUCore(MemoryOwnerCore, RouterCore):
             src_core_id, _, _ = self.mem_context.parse_main_mem_addr(src_handle.addr)
             src_core: DMACore = self.mem_context.get_owner(MemoryType.MAIN, src_core_id)
             src_coord = src_core.coord
-            
-        if self.mem_context.check_l1_mem_addr(dst_handle.addr):
+        
+        if isinstance(dst_handle, TemporaryBufferHandle):
+            dst_core_id = None
+            dst_core = None
+            dst_coord = None
+        elif self.mem_context.check_l1_mem_addr(dst_handle.addr):
             dst_core_id, _, _ = self.mem_context.parse_l1_mem_addr(dst_handle.addr)
             dst_core: NPUCore = self.mem_context.get_owner(MemoryType.L1, dst_core_id)
             dst_coord = dst_core.coord
@@ -132,7 +140,8 @@ class NPUCore(MemoryOwnerCore, RouterCore):
         
         # start parallel
         for i in range(n_pages):
-            self.create_new_parallel_kernel()   
+            # self.create_new_parallel_kernel()   
+            start_parallel_kernel()
             
             if isinstance(src_core, NPUCore):
                 src_core.read_l1_mem(src_handle, src_page_idx + i, tmp_handle, i, 1)
@@ -147,7 +156,10 @@ class NPUCore(MemoryOwnerCore, RouterCore):
             elif isinstance(dst_core, DMACore):
                 dst_core.dma_write(dst_handle, dst_page_idx + i, tmp_handle, i, 1)
                 
-        self.merge_parallel_kernels()
+            end_parallel_kernel()
+                
+        # self.merge_parallel_kernels()
+        # end_parallel_kernel()
         # end parallel
 
     ########################################
@@ -360,6 +372,7 @@ class NPUCoreFunctionalModel(CoreFunctionalModel):
             vrd = vreg_dest + i if vreg_dest is not None else None
             self.core.vpu_context.execute_vector_op(opcode, vra, vrb, vrd, inplace=inplace)
         
+        
 # if __name__ == "__main__":
 #     import torch
     
@@ -461,7 +474,7 @@ if __name__ == "__main__":
             
     device = MyDevice()
     device.initialize(create_trace=False)
-    device.change_sim_model_options(use_cycle_model=True, use_functional_model=False)
+    device.change_sim_model_options(use_cycle_model=True, use_functional_model=True)
     
     bf_handle = BufferHandle("buffer1", addr=device.mem_context.get_main_mem_addr(0, 0, 0), page_size=32*32*4, n_pages=8, default_page_content="EMPTY")
     cb_handle = CircularBufferHandle("circular_buffer1", addr=bf_handle.addr + bf_handle.size, page_size=32*32*4, n_pages=8)
@@ -473,15 +486,15 @@ if __name__ == "__main__":
 
     @core_kernel_method
     def reader_kernel(core: NPUCore, bf_handle: BufferHandle, cb_handle: CircularBufferHandle) -> int:
-        core.cb_reserve_back(cb_handle, 2)
-        core.copy_page(src_handle=bf_handle, src_page_idx=0, dst_handle=cb_handle, dst_page_idx=0, n_pages=2)
-        core.cb_push_back(cb_handle, 2)
+        core.cb_reserve_back(cb_handle, 4)
+        core.copy_page(src_handle=bf_handle, src_page_idx=0, dst_handle=cb_handle, dst_page_idx=0, n_pages=4)
+        core.cb_push_back(cb_handle, 4)
     
     @core_kernel_method
     def writer_kernel(core: NPUCore, bf_handle: BufferHandle, cb_handle: CircularBufferHandle) -> int:
-        core.cb_wait_front(cb_handle, 2)
-        core.copy_page(src_handle=cb_handle, src_page_idx=0, dst_handle=bf_handle, dst_page_idx=4, n_pages=2)
-        core.cb_pop_front(cb_handle, 2)
+        core.cb_wait_front(cb_handle, 4)
+        core.copy_page(src_handle=cb_handle, src_page_idx=0, dst_handle=bf_handle, dst_page_idx=4, n_pages=4)
+        core.cb_pop_front(cb_handle, 4)
     
     reader_kernel(device.npu_core, bf_handle, cb_handle)
     writer_kernel(device.npu_core, bf_handle, cb_handle)
