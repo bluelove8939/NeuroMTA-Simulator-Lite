@@ -12,18 +12,26 @@ class MemoryLayout:
         self._tensor = tensor
         self._tile_shape = tile_shape
         self._tiled_view = self._tensor.view(-1, *self._tile_shape)
+        
+        
+class RuntimeEnvironment:
+    def __init__(self, cores: list[tuple[int, int]], mem_context: MemoryContext, mxu_config: MXUConfig, vpu_config: VPUConfig):
+        self._cores         = cores
+        self._mem_context   = mem_context
+        self._mxu_config    = mxu_config
+        self._vpu_config    = vpu_config
 
 
 class Runtime:
-    def __init__(self, mem_context: MemoryContext = None, mxu_config: MXUConfig = None, vpu_config: VPUConfig = None):
-        self._mem_context = mem_context if mem_context is not None else MemoryContext()
-        self._mxu_config  = mxu_config  if mxu_config  is not None else MXUConfig()
-        self._vpu_config  = vpu_config  if vpu_config  is not None else VPUConfig()
+    # def __init__(self, mem_context: MemoryContext = None, mxu_config: MXUConfig = None, vpu_config: VPUConfig = None):
+    #     self._mem_context = mem_context if mem_context is not None else MemoryContext()
+    #     self._mxu_config  = mxu_config  if mxu_config  is not None else MXUConfig()
+    #     self._vpu_config  = vpu_config  if vpu_config  is not None else VPUConfig()
 
-    def initialize_runtime(self, mem_context: MemoryContext=None, mxu_config: MXUConfig=None, vpu_config: VPUConfig=None):
-        self._mem_context = mem_context if mem_context is not None else self._mem_context
-        self._mxu_config  = mxu_config  if mxu_config  is not None else self._mxu_config
-        self._vpu_config  = vpu_config  if vpu_config  is not None else self._vpu_config
+    # def initialize_runtime(self, mem_context: MemoryContext=None, mxu_config: MXUConfig=None, vpu_config: VPUConfig=None):
+    #     self._mem_context = mem_context if mem_context is not None else self._mem_context
+    #     self._mxu_config  = mxu_config  if mxu_config  is not None else self._mxu_config
+    #     self._vpu_config  = vpu_config  if vpu_config  is not None else self._vpu_config
 
     def linear(
         self, x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor = None
@@ -50,9 +58,9 @@ class Runtime:
         
     #     y = torch.zeros((N, K, OH, OW), dtype=x.dtype)
         
-    @property
-    def is_initialized(self) -> bool:
-        return self._mem_context is not None and self._mxu_config is not None and self._vpu_config is not None
+    # @property
+    # def is_initialized(self) -> bool:
+    #     return self._mem_context is not None and self._mxu_config is not None and self._vpu_config is not None
     
     
 if __name__ == "__main__":

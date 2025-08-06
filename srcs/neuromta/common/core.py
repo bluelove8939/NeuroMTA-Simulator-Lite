@@ -443,12 +443,12 @@ class Core:
         return ret
     
     def get_remaining_cycles(self) -> int:
-        cmds = self.get_current_commands()
+        cmds = [cmd for cmd in self.get_current_commands() if not isinstance(cmd, CommandConditional)]
         
         if len(cmds) == 0:
             return 1
 
-        return max(1, min(map(lambda x: 0 if isinstance(x, CommandConditional) else x.get_remaining_cycles(), cmds)))
+        return max(1, min(map(lambda x: x.get_remaining_cycles(), cmds)))
 
     def update_cycle_time(self, cycle_time: int):
         kernel_ids = list(self._dispatched_kernels.keys())

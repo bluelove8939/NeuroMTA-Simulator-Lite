@@ -292,9 +292,7 @@ class NPUCoreFunctionalModel(CoreFunctionalModel):
         if not skip_psum_preload:
             if self.core.mxu_context.dataflow == MXUDataflow.OS:
                 psum_page_idx, psum_page_offset = psum_handle.parse_buffer_offset(psum_buffer_offset)
-                st = psum_page_offset
-                ed = psum_page_offset + self.core.mxu_context.ofm_tile_size
-                psum_data = psum_handle.get_page(psum_page_idx).content[st:ed].view(dtype=self.core.mxu_context.acc_dtype).reshape(self.core.mxu_context.ofm_tile_shape)
+                psum_data = psum_handle.get_page(psum_page_idx).content_view(shape=self.core.mxu_context.ofm_tile_shape, dtype=self.core.mxu_context.acc_dtype, page_offset=psum_page_offset)
                 self.core.mxu_context.load_tile_pe_arr(psum_data)
             elif self.core.mxu_context.dataflow == MXUDataflow.WS:
                 raise Exception(f"[ERROR] PSUM preload is not supported in WS dataflow")
@@ -304,61 +302,41 @@ class NPUCoreFunctionalModel(CoreFunctionalModel):
                 raise Exception("[ERROR] WGT preload is not supported in OS dataflow.")
             elif self.core.mxu_context.dataflow == MXUDataflow.WS:
                 wgt_page_idx, wgt_page_offset = wgt_handle.parse_buffer_offset(wgt_buffer_offset)
-                st = wgt_page_offset
-                ed = wgt_page_offset + self.core.mxu_context.wgt_tile_size
-                wgt_data = wgt_handle.get_page(wgt_page_idx).content[st:ed].view(dtype=self.core.mxu_context.dtype).reshape(self.core.mxu_context.wgt_tile_shape)
+                wgt_data = wgt_handle.get_page(wgt_page_idx).content_view(shape=self.core.mxu_context.wgt_tile_shape, dtype=self.core.mxu_context.dtype, page_offset=wgt_page_offset)
                 self.core.mxu_context.load_tile_pe_arr(wgt_data)
             
         if self.core.mxu_context.dataflow == MXUDataflow.OS:
             for i in range(streaming_n_tiles):
                 if self.core.mxu_context.dataflow == MXUDataflow.OS:
-                    bo = ifm_buffer_offset + i * self.core.mxu_context.ifm_tile_size
-                    ifm_page_idx, ifm_page_offset = ifm_handle.parse_buffer_offset(bo)
-                    st = ifm_page_offset
-                    ed = ifm_page_offset + self.core.mxu_context.ifm_tile_size
-                    ifm_tile = ifm_handle.get_page(ifm_page_idx).content[st:ed].view(dtype=self.core.mxu_context.dtype).reshape(self.core.mxu_context.ifm_tile_shape)
+                    ifm_page_idx, ifm_page_offset = ifm_handle.parse_buffer_offset(ifm_buffer_offset + i * self.core.mxu_context.ifm_tile_size)
+                    ifm_tile = ifm_handle.get_page(ifm_page_idx).content_view(shape=self.core.mxu_context.ifm_tile_shape, dtype=self.core.mxu_context.dtype, page_offset=ifm_page_offset)
                     
-                    bo = wgt_buffer_offset + i * self.core.mxu_context.wgt_tile_size
-                    wgt_page_idx, wgt_page_offset = wgt_handle.parse_buffer_offset(bo)
-                    st = wgt_page_offset
-                    ed = wgt_page_offset + self.core.mxu_context.wgt_tile_size
-                    wgt_tile = wgt_handle.get_page(wgt_page_idx).content[st:ed].view(dtype=self.core.mxu_context.dtype).reshape(self.core.mxu_context.wgt_tile_shape)
+                    wgt_page_idx, wgt_page_offset = wgt_handle.parse_buffer_offset( wgt_buffer_offset + i * self.core.mxu_context.wgt_tile_size)
+                    wgt_tile = wgt_handle.get_page(wgt_page_idx).content_view(shape=self.core.mxu_context.wgt_tile_shape, dtype=self.core.mxu_context.dtype, page_offset=wgt_page_offset)
                     
                     self.core.mxu_context.execute_gemm(ifm_tile=ifm_tile, wgt_tile=wgt_tile, psum_tile=None)
             
             if not skip_ofm_flush:
                 ofm_page_idx, ofm_page_offset = ofm_handle.parse_buffer_offset(ofm_buffer_offset)
-                st = ofm_page_offset
-                ed = ofm_page_offset + self.core.mxu_context.ofm_tile_size
                 ofm_tile = self.core.mxu_context.get_pe_arr_regs()
-                ofm_handle.get_page(ofm_page_idx).content[st:ed].view(dtype=self.core.mxu_context.acc_dtype)[:] = ofm_tile.flatten()
+                ofm_handle.get_page(ofm_page_idx).content_view(shape=self.core.mxu_context.ofm_tile_shape, dtype=self.core.mxu_context.acc_dtype, page_offset=ofm_page_offset)[:, :] = ofm_tile
         elif self.core.mxu_context.dataflow == MXUDataflow.WS:
             for i in range(streaming_n_tiles):
-                bo = ifm_buffer_offset + i * self.core.mxu_context.ifm_tile_size
-                ifm_page_idx, ifm_page_offset = ifm_handle.parse_buffer_offset(bo)
-                st = ifm_page_offset
-                ed = ifm_page_offset + self.core.mxu_context.ifm_tile_size
-                ifm_tile = ifm_handle.get_page(ifm_page_idx).content[st:ed].view(dtype=self.core.mxu_context.dtype).reshape(self.core.mxu_context.ifm_tile_shape)
+                ifm_page_idx, ifm_page_offset = ifm_handle.parse_buffer_offset(ifm_buffer_offset + i * self.core.mxu_context.ifm_tile_size)
+                ifm_tile = ifm_handle.get_page(ifm_page_idx).content_view(shape=self.core.mxu_context.ifm_tile_shape, dtype=self.core.mxu_context.dtype, page_offset=ifm_page_offset)
                 
-                bo = psum_buffer_offset + i * self.core.mxu_context.ofm_tile_size
-                psum_page_idx, psum_page_offset = psum_handle.parse_buffer_offset(bo)
-                st = psum_page_offset
-                ed = psum_page_offset + self.core.mxu_context.ofm_tile_size
-                psum_tile = psum_handle.get_page(psum_page_idx).content[st:ed].view(dtype=self.core.mxu_context.acc_dtype).reshape(self.core.mxu_context.ofm_tile_shape)
+                psum_page_idx, psum_page_offset = psum_handle.parse_buffer_offset(psum_buffer_offset + i * self.core.mxu_context.ofm_tile_size)
+                psum_tile = psum_handle.get_page(psum_page_idx).content_view(shape=self.core.mxu_context.ofm_tile_shape, dtype=self.core.mxu_context.acc_dtype, page_offset=psum_page_offset)
                 
                 self.core.mxu_context.execute_gemm(ifm_tile=ifm_tile, wgt_tile=None, psum_tile=psum_tile)
                 
                 if not skip_ofm_flush:
                     if streaming_n_tiles > 1:
                         raise Exception(f"[ERROR] It is impossible to skip OFM flush with WS dataflow when the number of streaming tiles is larger than 1")
-
-                    bo = ofm_buffer_offset + i * self.core.mxu_context.ofm_tile_size
-                    ofm_page_idx, ofm_page_offset = ofm_handle.parse_buffer_offset(bo)
-                    st = ofm_page_offset
-                    ed = ofm_page_offset + self.core.mxu_context.ofm_tile_size
                     
+                    ofm_page_idx, ofm_page_offset = ofm_handle.parse_buffer_offset(ofm_buffer_offset + i * self.core.mxu_context.ofm_tile_size)
                     ofm_tile = self.core.mxu_context.get_acc_regs()
-                    ofm_handle.get_page(ofm_page_idx).content[st:ed].view(dtype=self.core.mxu_context.acc_dtype)[:] = ofm_tile.flatten()
+                    ofm_handle.get_page(ofm_page_idx).content_view(shape=self.core.mxu_context.ofm_tile_shape, dtype=self.core.mxu_context.acc_dtype, page_offset=ofm_page_offset)[:, :] = ofm_tile
                     
     def _atom_vpu_set_vector_reg(self, handle: TemporaryBufferHandle, page_idx: int, page_offset: int, vreg_idx: int, burst_len: int=1):
         for i in range(burst_len):
@@ -382,11 +360,91 @@ class NPUCoreFunctionalModel(CoreFunctionalModel):
             vrd = vreg_dest + i if vreg_dest is not None else None
             self.core.vpu_context.execute_vector_op(opcode, vra, vrb, vrd, inplace=inplace)
         
+# if __name__ == "__main__":
+#     import torch
+    
+#     from neuromta.common.parser_utils import parse_mem_cap_str
+#     from neuromta.common.device import Device
+    
+#     class MyDevice(Device):
+#         def __init__(self):
+#             super().__init__()
+            
+#             self.mem_context = MemoryContext()
+#             self.icnt_context = IcntNetworkContext(grid_shape=(4, 4))
+#             self.mxu_config = MXUConfig(pe_arr_height=32, pe_arr_width=32, seq_len=32, dtype=torch.int8, acc_dtype=torch.int32, dataflow=MXUDataflow.OS, op_latency_per_byte=1)
+#             self.vpu_config = VPUConfig(vreg_len=parse_mem_cap_str("128B"), vreg_num=32, vdtype=torch.int32, vlen_max=1024, vlen_min=32)
+
+#             self.npu_core = NPUCore(coord=(0, 0), mem_context=self.mem_context, icnt_context=self.icnt_context, mxu_config=self.mxu_config, vpu_config=self.vpu_config)
+#             self.dma_core = DMACore(coord=(0, 1), mem_context=self.mem_context, icnt_context=self.icnt_context)
+#             self.icnt_core = IcntNetworkCore(icnt_context=self.icnt_context)
+            
+#     device = MyDevice()
+#     device.initialize(create_trace=False)
+#     device.change_sim_model_options(use_cycle_model=True, use_functional_model=True)
+    
+#     device.npu_core.vpu_context.reconfigure_vector_reg_file(vlen=32, vdtype=torch.int32)
+    
+#     ifm = torch.arange(0, 32*32, 1).to(torch.int8).reshape((32, 32))
+#     wgt = torch.arange(0, 32*32, 1).to(torch.int8).reshape((32, 32))
+#     psum = torch.arange(0, 32*32, 1).to(torch.int32).reshape((32, 32))
+
+#     ifm_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(content=ifm),])
+#     wgt_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(content=wgt),])
+#     psum_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(content=psum),])
+#     ofm_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(page_size=32*32*4),])
+    
+#     @core_kernel_method
+#     def example_tiled_gemm_kernel(
+#         core: NPUCore,
+#         ifm_handle:  TemporaryBufferHandle, ifm_page_idx:  int, 
+#         wgt_handle:  TemporaryBufferHandle, wgt_page_idx:  int, 
+#         psum_handle: TemporaryBufferHandle, psum_page_idx: int,
+#         ofm_handle:  TemporaryBufferHandle, ofm_page_idx:  int,
+#     ):
+#         core._atom_acquire_mxu_lock()
+#         core._atom_mxu_tiled_gemm(
+#             ifm_handle, ifm_page_idx, 
+#             wgt_handle, wgt_page_idx, 
+#             psum_handle, psum_page_idx, 
+#             ofm_handle, ofm_page_idx,
+#             1, True, False, False
+#         )
+#         core._atom_release_mxu_lock()
+        
+#         core._atom_acquire_vpu_lock()
+#         core._atom_vpu_set_vector_reg(ofm_handle, 0, 0, 0, 1)
+#         core._atom_vpu_set_vector_reg(ofm_handle, 0, 0, 1, 1)
+#         core._atom_vpu_execute_vector_reg(VPUOperator.MUL, 0, 1, 2, inplace=False, burst_len=1)
+#         core._atom_vpu_get_vector_reg(ofm_handle, 0, 0, 2, burst_len=1)
+#         core._atom_release_vpu_lock()
+        
+#     example_tiled_gemm_kernel(device.npu_core, ifm_handle, 0, wgt_handle, 0, psum_handle, 0, ofm_handle, 0)
+    
+#     device.verbose = True   # print debug messages
+#     device.run_kernels()
+    
+#     reference = (ifm @ wgt) + psum
+#     reference[0, :] = reference[0, :] * reference[0, :]
+    
+#     simulated = ofm_handle.get_page(0).content_view(shape=(32, 32), dtype=torch.int32)
+    
+#     print("\n=== REFERENCE RESULT ===")
+#     print(reference)
+    
+#     print("\n=== FUNCTIONAL SIMULATION RESULT ===")
+#     print(simulated)
+    
+#     print(f"\nfunctional simulation validated: {torch.allclose(reference, simulated)}")
+    
+    
+        
 if __name__ == "__main__":
     import torch
     
     from neuromta.common.parser_utils import parse_mem_cap_str
     from neuromta.common.device import Device
+    from neuromta.common.buffer_handle import BufferHandle, CircularBufferHandle
     
     class MyDevice(Device):
         def __init__(self):
@@ -394,7 +452,7 @@ if __name__ == "__main__":
             
             self.mem_context = MemoryContext()
             self.icnt_context = IcntNetworkContext(grid_shape=(4, 4))
-            self.mxu_config = MXUConfig(pe_arr_height=32, pe_arr_width=32, seq_len=32, dtype=torch.int8, acc_dtype=torch.int32, dataflow=MXUDataflow.OS, op_latency_per_byte=1)
+            self.mxu_config = MXUConfig(pe_arr_height=32, pe_arr_width=32, seq_len=32, dtype=torch.int32, acc_dtype=torch.int32, dataflow=MXUDataflow.OS, op_latency_per_byte=1)
             self.vpu_config = VPUConfig(vreg_len=parse_mem_cap_str("128B"), vreg_num=32, vdtype=torch.int32, vlen_max=1024, vlen_min=32)
 
             self.npu_core = NPUCore(coord=(0, 0), mem_context=self.mem_context, icnt_context=self.icnt_context, mxu_config=self.mxu_config, vpu_config=self.vpu_config)
@@ -403,113 +461,33 @@ if __name__ == "__main__":
             
     device = MyDevice()
     device.initialize(create_trace=False)
-    device.change_sim_model_options(use_cycle_model=True, use_functional_model=True)
+    device.change_sim_model_options(use_cycle_model=True, use_functional_model=False)
     
-    device.npu_core.vpu_context.reconfigure_vector_reg_file(vlen=32, vdtype=torch.int32)
-    
-    ifm = torch.arange(0, 32*32, 1).to(torch.int8).reshape((32, 32))
-    wgt = torch.arange(0, 32*32, 1).to(torch.int8).reshape((32, 32))
-    psum = torch.arange(0, 32*32, 1).to(torch.int32).reshape((32, 32))
+    bf_handle = BufferHandle("buffer1", addr=device.mem_context.get_main_mem_addr(0, 0, 0), page_size=32*32*4, n_pages=8, default_page_content="EMPTY")
+    cb_handle = CircularBufferHandle("circular_buffer1", addr=bf_handle.addr + bf_handle.size, page_size=32*32*4, n_pages=8)
 
-    ifm_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(content=ifm),])
-    wgt_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(content=wgt),])
-    psum_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(content=psum),])
-    ofm_handle = TemporaryBufferHandle(32*32*4, 1, [PageHandle(page_size=32*32*4),])
+    bf_handle.add_page(0, PageHandle(content="DATA 1", page_size=32*32*4))
+    bf_handle.add_page(1, PageHandle(content="DATA 2", page_size=32*32*4))
+    bf_handle.add_page(2, PageHandle(content="DATA 3", page_size=32*32*4))
+    bf_handle.add_page(3, PageHandle(content="DATA 4", page_size=32*32*4))
+
+    @core_kernel_method
+    def reader_kernel(core: NPUCore, bf_handle: BufferHandle, cb_handle: CircularBufferHandle) -> int:
+        core.cb_reserve_back(cb_handle, 2)
+        core.copy_page(src_handle=bf_handle, src_page_idx=0, dst_handle=cb_handle, dst_page_idx=0, n_pages=2)
+        core.cb_push_back(cb_handle, 2)
     
     @core_kernel_method
-    def example_tiled_gemm_kernel(
-        core: NPUCore,
-        ifm_handle:  TemporaryBufferHandle, ifm_page_idx:  int, 
-        wgt_handle:  TemporaryBufferHandle, wgt_page_idx:  int, 
-        psum_handle: TemporaryBufferHandle, psum_page_idx: int,
-        ofm_handle:  TemporaryBufferHandle, ofm_page_idx:  int,
-    ):
-        core._atom_acquire_mxu_lock()
-        core._atom_mxu_tiled_gemm(
-            ifm_handle, ifm_page_idx, 
-            wgt_handle, wgt_page_idx, 
-            psum_handle, psum_page_idx, 
-            ofm_handle, ofm_page_idx,
-            1, True, False, False
-        )
-        core._atom_release_mxu_lock()
-        
-        core._atom_acquire_vpu_lock()
-        core._atom_vpu_set_vector_reg(ofm_handle, 0, 0, 0, 1)
-        core._atom_vpu_set_vector_reg(ofm_handle, 0, 0, 1, 1)
-        core._atom_vpu_execute_vector_reg(VPUOperator.MUL, 0, 1, 2, inplace=False, burst_len=1)
-        core._atom_vpu_get_vector_reg(ofm_handle, 0, 0, 2, burst_len=1)
-        core._atom_release_vpu_lock()
-        
-    example_tiled_gemm_kernel(device.npu_core, ifm_handle, 0, wgt_handle, 0, psum_handle, 0, ofm_handle, 0)
+    def writer_kernel(core: NPUCore, bf_handle: BufferHandle, cb_handle: CircularBufferHandle) -> int:
+        core.cb_wait_front(cb_handle, 2)
+        core.copy_page(src_handle=cb_handle, src_page_idx=0, dst_handle=bf_handle, dst_page_idx=4, n_pages=2)
+        core.cb_pop_front(cb_handle, 2)
+    
+    reader_kernel(device.npu_core, bf_handle, cb_handle)
+    writer_kernel(device.npu_core, bf_handle, cb_handle)
     
     device.verbose = True   # print debug messages
     device.run_kernels()
     
-    reference = (ifm @ wgt) + psum
-    reference[0, :] = reference[0, :] * reference[0, :]
-    
-    simulated = ofm_handle.get_page(0).content_view(shape=(32, 32), dtype=torch.int32)
-    
-    print("\n=== REFERENCE RESULT ===")
-    print(reference)
-    
-    print("\n=== FUNCTIONAL SIMULATION RESULT ===")
-    print(simulated)
-    
-    print(f"\nfunctional simulation validated: {torch.allclose(reference, simulated)}")
-    
-    
-        
-# if __name__ == "__main__":
-#     import numpy as np
-    
-#     from neuromta.common.parser_utils import parse_mem_cap_str
-#     from neuromta.common.device import Device
-#     from neuromta.common.buffer_handle import BufferHandle, CircularBufferHandle
-    
-#     class MyDevice(Device):
-#         def __init__(self):
-#             super().__init__()
-            
-#             self.mem_context = MemoryContext()
-#             self.icnt_context = IcntNetworkContext(grid_shape=(4, 4))
-#             self.mxu_config = MXUConfig(pe_arr_height=32, pe_arr_width=32, seq_len=32, dtype=np.int32, acc_dtype=np.int32, dataflow=MXUDataflow.OS, op_latency_per_byte=1)
-#             self.vpu_config = VPUConfig(vreg_len=parse_mem_cap_str("128B"), vreg_num=32, vdtype=np.int32, vlen_max=1024, vlen_min=32)
-
-#             self.npu_core = NPUCore(coord=(0, 0), mem_context=self.mem_context, icnt_context=self.icnt_context, mxu_config=self.mxu_config, vpu_config=self.vpu_config)
-#             self.dma_core = DMACore(coord=(0, 1), mem_context=self.mem_context, icnt_context=self.icnt_context)
-#             self.icnt_core = IcntNetworkCore(icnt_context=self.icnt_context)
-            
-#     device = MyDevice()
-#     device.initialize(create_trace=False)
-#     device.change_sim_model_options(use_cycle_model=True, use_functional_model=False)
-    
-#     bf_handle = BufferHandle("buffer1", addr=device.mem_context.get_main_mem_addr(0, 0, 0), page_size=32*32*4, n_pages=8)
-#     cb_handle = CircularBufferHandle("circular_buffer1", addr=bf_handle.addr + bf_handle.size, page_size=32*32*4, n_pages=8)
-    
-#     bf_handle.data_set_page(0, "DATA 1")
-#     bf_handle.data_set_page(1, "DATA 2")
-#     bf_handle.data_set_page(2, "DATA 3")
-#     bf_handle.data_set_page(3, "DATA 4")
-    
-#     @core_kernel_method
-#     def reader_kernel(core: NPUCore, bf_handle: BufferHandle, cb_handle: CircularBufferHandle) -> int:
-#         core.cb_reserve_back(cb_handle, 2)
-#         core.copy_page(src_handle=bf_handle, src_page_idx=0, dst_handle=cb_handle, dst_page_idx=0, n_pages=2)
-#         core.cb_push_back(cb_handle, 2)
-    
-#     @core_kernel_method
-#     def writer_kernel(core: NPUCore, bf_handle: BufferHandle, cb_handle: CircularBufferHandle) -> int:
-#         core.cb_wait_front(cb_handle, 2)
-#         core.copy_page(src_handle=cb_handle, src_page_idx=0, dst_handle=bf_handle, dst_page_idx=4, n_pages=2)
-#         core.cb_pop_front(cb_handle, 2)
-    
-#     reader_kernel(device.npu_core, bf_handle, cb_handle)
-#     writer_kernel(device.npu_core, bf_handle, cb_handle)
-    
-#     device.verbose = True   # print debug messages
-#     device.run_kernels()
-    
-#     for i in range(bf_handle.n_pages):
-#         print(f"Buffer Page {i}: {bf_handle.data_get_page(i)}")
+    for i in range(bf_handle.n_pages):
+        print(f"Buffer Page {i}: {bf_handle.get_page(i).content}")

@@ -79,8 +79,6 @@ class MemoryContext(Context):
         self._l1_mem_rd_latency_per_block   = l1_mem_rd_latency_per_block
         self._l1_mem_wr_latency_per_block   = l1_mem_wr_latency_per_block
         
-        # self._buffer_handles: dict[str, BufferHandle | CircularBufferHandle] = {}
-        
     ###############################################
     # Memory Owner Management
     ###############################################
@@ -190,42 +188,3 @@ class MemoryContext(Context):
     
     def get_main_mem_wr_latency(self, size: int) -> int:
         return self._main_mem_config.get_cycles(size)
-
-    # ###############################################
-    # # Buffer Handle Management
-    # ###############################################
-    
-    # def create_buffer_handle(self, buffer_id: str, addr: int, page_size: int, n_pages: int) -> BufferHandle:
-    #     if buffer_id in self._buffer_handles:
-    #         raise Exception(f"[ERROR] Buffer handle with ID '{buffer_id}' already exists.")
-    #     if not (self.check_main_mem_addr(addr) or self.check_l1_mem_addr(addr)):
-    #         raise Exception(f"[ERROR] Address {addr:#x} is out of bounds for buffer handle creation.")
-        
-    #     handle = BufferHandle(buffer_id, addr, page_size, n_pages)
-    #     self._buffer_handles[buffer_id] = handle
-    #     return handle
-    
-    # def create_circular_buffer_handle(self, buffer_id: str, addr: int, page_size: int, n_pages: int) -> CircularBufferHandle:
-    #     if buffer_id in self._buffer_handles:
-    #         raise Exception(f"[ERROR] Circular buffer handle with ID '{buffer_id}' already exists.")
-    #     if not (self.check_main_mem_addr(addr) or self.check_l1_mem_addr(addr)):
-    #         raise Exception(f"[ERROR] Address {addr:#x} is out of bounds for circular buffer handle creation.")
-
-    #     handle = CircularBufferHandle(buffer_id, addr, page_size, n_pages)
-    #     self._buffer_handles[buffer_id] = handle
-    #     return handle
-    
-    # def remove_buffer_handle(self, buffer_id: str):
-    #     if buffer_id not in self._buffer_handles:
-    #         raise Exception(f"[ERROR] Buffer handle with ID '{buffer_id}' does not exist.")
-        
-    #     del self._buffer_handles[buffer_id]
-        
-    # def remove_all_buffer_handles(self):
-    #     self._buffer_handles.clear()
-        
-    # def get_buffer_handle(self, buffer_id: str) -> BufferHandle | CircularBufferHandle:
-    #     if buffer_id not in self._buffer_handles:
-    #         raise Exception(f"[ERROR] Buffer handle with ID '{buffer_id}' does not exist.")
-        
-    #     return self._buffer_handles[buffer_id]

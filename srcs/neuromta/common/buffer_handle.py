@@ -1,3 +1,4 @@
+import functools
 import torch
 from typing import Any, Sequence
 
@@ -25,8 +26,11 @@ class PageHandle:
         self._page_size: int = page_size
         self._content: torch.Tensor = content
     
-    def content_view(self, shape: tuple[int, ...], dtype: torch.dtype = torch.uint8) -> torch.Tensor:
-        return self._content.view(dtype=dtype).reshape(shape)
+    def content_view(self, shape: tuple[int, ...], dtype: torch.dtype = torch.uint8, page_offset: int=0) -> torch.Tensor:
+        size = functools.reduce(lambda x, y: x * y, shape, 1) * dtype.itemsize
+        st = page_offset
+        ed = st + size
+        return self._content[st:ed].view(dtype=dtype).reshape(shape)
     
     @property
     def content(self) -> torch.Tensor:
@@ -41,13 +45,13 @@ class PageHandle:
 
 
 class BufferHandle:
-    def __init__(self, buffer_id: str, addr: int, page_size: int, n_pages: int, pages: Sequence[PageHandle] = None):
+    def __init__(self, buffer_id: str, addr: int, page_size: int, n_pages: int, pages: Sequence[PageHandle] = None, default_page_content: Any = None):
         self._buffer_id = buffer_id
         self._addr = addr
         self._page_size = page_size
         self._n_pages  = n_pages
         
-        self._pages = [PageHandle(self._page_size) for _ in range(self._n_pages)]
+        self._pages = [PageHandle(self._page_size, default_page_content) for _ in range(self._n_pages)]
         self._lock = TicketLock()
         
         if pages is not None:
