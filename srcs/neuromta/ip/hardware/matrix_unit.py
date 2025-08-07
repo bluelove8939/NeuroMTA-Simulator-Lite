@@ -84,14 +84,20 @@ class MXUContext:
     def get_flush_acc_regs_cycles(self) -> int:
         return self.seq_len
 
-    def get_pe_arr_regs(self) -> torch.Tensor:
-        return self._pe_arr_regs.clone()
+    def get_pe_arr_regs(self, clear_regs: bool=True) -> torch.Tensor:
+        regs = self._pe_arr_regs
+        if clear_regs:
+            self._pe_arr_regs = torch.zeros_like(self._pe_arr_regs)
+        return regs
 
-    def get_acc_regs(self) -> torch.Tensor:
+    def get_acc_regs(self, clear_regs: bool=True) -> torch.Tensor:
         if self._acc_regs is None:
             return self.get_pe_arr_regs()
-        return self._acc_regs.clone()
-    
+        regs = self._acc_regs
+        if clear_regs:
+            self._acc_regs = torch.zeros_like(self._acc_regs)
+        return regs
+
     def load_tile_pe_arr(self, tile: torch.Tensor):
         if tile.shape != self.pe_arr_shape:
             raise Exception(f"[ERROR] Tile shape {tile.shape} does not match PE array shape {(self.pe_arr_height, self.pe_arr_width)}.")

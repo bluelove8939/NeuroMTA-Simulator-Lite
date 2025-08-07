@@ -84,6 +84,11 @@ class NPUCore(MemoryOwnerCore, RouterCore):
     def _atom_release_vpu_lock(self):
         self._release_ambiguous_lock(self.vpu_lock)
         
+    # @core_command_method
+    # def _atom_wait_lock(self, lock: TicketLock):
+    #     pid = get_global_pid()
+    #     return lock.is_locked_with(key=pid)
+        
     #######################################
     # Memory Access Commands
     #######################################
@@ -111,9 +116,9 @@ class NPUCore(MemoryOwnerCore, RouterCore):
     @core_kernel_method
     def copy_page(self, src_handle: BufferHandle, src_page_idx: int, dst_handle: BufferHandle, dst_page_idx: int, n_pages: int):
         if isinstance(src_handle, TemporaryBufferHandle):
-            src_core_id = None
-            src_core = None
-            src_coord = None
+            src_core_id = self.mem_seg_id
+            src_core = self
+            src_coord = self.coord
         elif self.mem_context.check_l1_mem_addr(src_handle.addr):
             src_core_id, _, _ = self.mem_context.parse_l1_mem_addr(src_handle.addr)
             src_core: NPUCore = self.mem_context.get_owner(MemoryType.L1, src_core_id)
@@ -124,9 +129,9 @@ class NPUCore(MemoryOwnerCore, RouterCore):
             src_coord = src_core.coord
         
         if isinstance(dst_handle, TemporaryBufferHandle):
-            dst_core_id = None
-            dst_core = None
-            dst_coord = None
+            dst_core_id = self.mem_seg_id
+            dst_core = self
+            dst_coord = self.coord
         elif self.mem_context.check_l1_mem_addr(dst_handle.addr):
             dst_core_id, _, _ = self.mem_context.parse_l1_mem_addr(dst_handle.addr)
             dst_core: NPUCore = self.mem_context.get_owner(MemoryType.L1, dst_core_id)
@@ -168,21 +173,34 @@ class NPUCore(MemoryOwnerCore, RouterCore):
     
     @core_command_method
     def cb_reserve_back(self, handle: CircularBufferHandle, n_pages: int):
-        if not handle.check_vacancy(n_pages): 
+        if not self._check_pid_is_locked_with(handle.lock):
             return False
+        if not handle.check_vacancy(n_pages): 
+            self._release_ambiguous_lock(handle.lock)
+            self._acquire_ambiguous_lock(handle.lock)
+            return False
+        
         handle.allocate_cb_space(n_pages=n_pages)
     
     @core_command_method
     def cb_push_back(self, handle: CircularBufferHandle, n_pages: int):
+        if not self._check_pid_is_locked_with(handle.lock):
+            return False
         handle.occupy_cb_space(n_pages=n_pages)
         
     @core_command_method
     def cb_wait_front(self, handle: CircularBufferHandle, n_pages: int):
+        if not self._check_pid_is_locked_with(handle.lock):
+            return False
         if not handle.check_occupancy(n_pages): 
+            self._release_ambiguous_lock(handle.lock)
+            self._acquire_ambiguous_lock(handle.lock)
             return False
         
     @core_command_method
     def cb_pop_front(self, handle: CircularBufferHandle, n_pages: int):
+        if not self._check_pid_is_locked_with(handle.lock):
+            return False
         handle.deallocate_cb_space(n_pages=n_pages)
         
     #########################################
@@ -330,7 +348,7 @@ class NPUCoreFunctionalModel(CoreFunctionalModel):
             
             if not skip_ofm_flush:
                 ofm_page_idx, ofm_page_offset = ofm_handle.parse_buffer_offset(ofm_buffer_offset)
-                ofm_tile = self.core.mxu_context.get_pe_arr_regs()
+                ofm_tile = self.core.mxu_context.get_pe_arr_regs(clear_regs=True)
                 ofm_handle.get_page(ofm_page_idx).content_view(shape=self.core.mxu_context.ofm_tile_shape, dtype=self.core.mxu_context.acc_dtype, page_offset=ofm_page_offset)[:, :] = ofm_tile
         elif self.core.mxu_context.dataflow == MXUDataflow.WS:
             for i in range(streaming_n_tiles):
@@ -347,7 +365,7 @@ class NPUCoreFunctionalModel(CoreFunctionalModel):
                         raise Exception(f"[ERROR] It is impossible to skip OFM flush with WS dataflow when the number of streaming tiles is larger than 1")
                     
                     ofm_page_idx, ofm_page_offset = ofm_handle.parse_buffer_offset(ofm_buffer_offset + i * self.core.mxu_context.ofm_tile_size)
-                    ofm_tile = self.core.mxu_context.get_acc_regs()
+                    ofm_tile = self.core.mxu_context.get_acc_regs(clear_regs=True)
                     ofm_handle.get_page(ofm_page_idx).content_view(shape=self.core.mxu_context.ofm_tile_shape, dtype=self.core.mxu_context.acc_dtype, page_offset=ofm_page_offset)[:, :] = ofm_tile
                     
     def _atom_vpu_set_vector_reg(self, handle: TemporaryBufferHandle, page_idx: int, page_offset: int, vreg_idx: int, burst_len: int=1):

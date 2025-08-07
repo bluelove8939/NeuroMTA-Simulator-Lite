@@ -22,6 +22,7 @@ __all__ = [
     # "register_command_to_compiled_kernel",
     "core_kernel_method",
     "core_command_method",
+    "new_parallel_kernel",
     "start_parallel_kernel",
     "end_parallel_kernel",
     
@@ -92,7 +93,8 @@ def get_global_kernel_context() -> 'Kernel':
 
 def get_global_pid() -> str:
     cid = get_global_core_context().core_id
-    kid = get_global_kernel_context().root_kernel.kernel_id   # the root kernel ID is used for global context PID
+    # kid = get_global_kernel_context().root_kernel.kernel_id   # the root kernel ID is used for global context PID
+    kid = get_global_kernel_context().kernel_id   # the root kernel ID is used for global context PID
     return f"{cid}.{kid}"   # this is the global PID format: <core_id>.<root kernel_id>
 
 def store_global_parent_kernel_callstack():
@@ -230,6 +232,13 @@ def core_conditional_command_method(_func: Callable):
         
         return cmd
     return __core_conditional_command_method_wrapper
+
+class new_parallel_kernel:
+    def __enter__(self):
+        start_parallel_kernel()
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        end_parallel_kernel()
 
 def start_parallel_kernel():
     if get_global_context_mode() != GlobalContextMode.COMPILE:
