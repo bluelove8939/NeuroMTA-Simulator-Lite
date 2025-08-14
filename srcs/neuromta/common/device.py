@@ -1,6 +1,13 @@
+import sys
 from typing import Sequence, Callable
 
 from neuromta.common.core import Core, Command, DEFAULT_CORE_ID
+
+
+__all__ = [
+    "CommandTrace",
+    "Device",
+]
 
 
 class CommandTrace:
@@ -93,10 +100,7 @@ class Device:
     
     def default_command_debug_hook(self, cmd: Command):
         if self.verbose:
-            args_expr = ', '.join(map(str, cmd.args))
-            kwargs_expr = ', '.join(f"{k}={v}" for k, v in cmd.kwargs.items())
-            total_args = f"({args_expr}, {kwargs_expr})" if len(kwargs_expr) else f"({args_expr})"
-            print(f"[DEBUG] #{self.timestamp:<5d} | core: {cmd.core_id:<24s} | kernel: {cmd.kernel_id:<24s} | command: {cmd.cmd_id:<34s} {total_args}")
+            sys.stdout.write(f"[DEBUG] #{self.timestamp:<5d} | core: {cmd.core_id:<24s} | kernel: {cmd.kernel_id:<24s} | command: {cmd.cmd_id:<34s}\n")
         
         if self.create_trace:
             entry = CommandTrace(

@@ -16,15 +16,15 @@ __all__ = [
     # "ParallelCompiledKernel",
     
     "CoreCycleModel",
-    "CoreFunctionalModel",
+    # "CoreFunctionalModel",
     "Core",
     
     # "register_command_to_compiled_kernel",
     "core_kernel_method",
     "core_command_method",
-    "new_parallel_kernel",
-    "start_parallel_kernel",
-    "end_parallel_kernel",
+    "new_parallel_thread",
+    "start_parallel_thread",
+    "end_parallel_thread",
     
     "DEFAULT_CORE_ID"
 ]
@@ -166,7 +166,9 @@ def core_command_method(_func: Callable):
     def __core_command_method_wrapper(_core: 'Core', *_args, **_kwargs) -> Command:
         if get_global_context_mode() == GlobalContextMode.IDLE:
             return _func(_core, *_args, **_kwargs)
-        
+        if get_global_context_mode() == GlobalContextMode.EXECUTE:
+            raise Exception(f"[ERROR] Command method '{_func.__name__}' cannot be called in EXECUTE mode. It should only be called in IDLE or COMPILE mode. This may be due to a faulty implementation of the command method. Check if you have called the command method inside the command method.")
+
         if not isinstance(_core, Core):
             raise Exception(f"[ERROR] Command method '{_func.__name__}' can only be called on an instance of Core")
         
@@ -175,8 +177,8 @@ def core_command_method(_func: Callable):
         if kernel_context is None:
             raise Exception(f"[ERROR] Cannot register command '{_func.__name__}' to the compiled kernel since it is called outside of a low-level kernel function")
         
-        _cycle_model        = getattr(_core._cycle_model, _func.__name__     )  if (_core.use_cycle_model      and hasattr(_core._cycle_model, _func.__name__     )) else 1
-        _functional_model   = getattr(_core._functional_model, _func.__name__)  if (_core.use_functional_model and hasattr(_core._functional_model, _func.__name__)) else None
+        _cycle_model        = getattr(_core._cycle_model, _func.__name__     )  if (_core._use_cycle_model      and hasattr(_core._cycle_model, _func.__name__     )) else 1
+        # _functional_model   = getattr(_core._functional_model, _func.__name__)  if (_core._use_functional_model and hasattr(_core._functional_model, _func.__name__)) else None
 
         cmd = Command(
             _core,                      # the core on which this command is registered
@@ -184,7 +186,7 @@ def core_command_method(_func: Callable):
             _func.__name__,             # the command ID is the name of the function
             _func,                      # the behavioral model is the function itself
             _cycle_model,               # the cycle model is the first argument
-            _functional_model,          # the functional model is the second argument (if exists)
+            # _functional_model,          # the functional model is the second argument (if exists)
             False,                      # is_conditional is False by default
             *_args,                     # the arguments of the command
             **_kwargs                   # the keyword arguments of the command
@@ -199,8 +201,8 @@ def core_command_method(_func: Callable):
         return cmd
     return __core_command_method_wrapper
 
-def core_conditional_command_method(_func: Callable):
-    def __core_conditional_command_method_wrapper(_core, *_args, **_kwargs) -> Command:
+def core_command_with_callback_method(_func: Callable):
+    def __core_command_with_callback_method_wrapper(_core, *_args, **_kwargs) -> Command:
         if get_global_context_mode() == GlobalContextMode.IDLE:
             return _func(_core, *_args, **_kwargs)
         
@@ -231,16 +233,16 @@ def core_conditional_command_method(_func: Callable):
             raise Exception(f"[ERROR] Command method '{_func.__name__}' is called outside of the compile or idle context.")
         
         return cmd
-    return __core_conditional_command_method_wrapper
+    return __core_command_with_callback_method_wrapper
 
-class new_parallel_kernel:
+class new_parallel_thread:
     def __enter__(self):
-        start_parallel_kernel()
+        start_parallel_thread()
     
     def __exit__(self, exc_type, exc_value, traceback):
-        end_parallel_kernel()
+        end_parallel_thread()
 
-def start_parallel_kernel():
+def start_parallel_thread():
     if get_global_context_mode() != GlobalContextMode.COMPILE:
         raise Exception("[ERROR] Cannot create a parallel kernel since the global context mode is not COMPILE")
     
@@ -250,7 +252,7 @@ def start_parallel_kernel():
     store_global_parent_kernel_callstack()
     set_global_context(GlobalContextMode.COMPILE, get_global_core_context(), parallel_kernel)
     
-def end_parallel_kernel():
+def end_parallel_thread():
     if get_global_context_mode() != GlobalContextMode.COMPILE:
         raise Exception("[ERROR] Cannot end parallel kernel since the global context mode is not COMPILE")
 
@@ -269,8 +271,8 @@ class Command:
         cmd_id: str,
         behavioral_model: Callable,
         cycle_model: Callable,
-        functional_model: Callable,
-        is_conditional: bool = False,
+        # functional_model: Callable,
+        is_callback_cycle: bool = False,
         *args,
         **kwargs
     ):
@@ -279,8 +281,8 @@ class Command:
         self.cmd_id             = cmd_id
         self.behavioral_model   = behavioral_model
         self.cycle_model        = cycle_model
-        self.functional_model   = functional_model
-        self.is_conditional     = is_conditional
+        # self.functional_model   = functional_model
+        self.is_callback_cycle  = is_callback_cycle
         self.args               = args
         self.kwargs             = kwargs
         
@@ -288,7 +290,7 @@ class Command:
         self._cached_cycle_slack: int = 0
         
     def get_remaining_cycles(self) -> int:
-        if self.is_conditional:
+        if self.is_callback_cycle:
             return None     # Conditional commands do not have a fixed cycle count
         
         if self._cached_cycle is None:
@@ -305,7 +307,7 @@ class Command:
         if cycle_time < 0:
             raise ValueError(f"[ERROR] Cycle time cannot be negative: {cycle_time}")
 
-        if self.is_conditional:
+        if self.is_callback_cycle:
             flag = self.run_behavioral_model()
         
             if not isinstance(flag, bool):
@@ -321,8 +323,8 @@ class Command:
                 
                 if isinstance(flag, bool) and flag == False:
                     self._cached_cycle_slack -= cycle_time
-                else:
-                    self.run_functional_model()
+                # else:
+                #     self.run_functional_model()
                     
         if self.is_finished:
             self.core.run_command_debug_hook(cmd=self)
@@ -331,12 +333,12 @@ class Command:
         with new_global_context(GlobalContextMode.EXECUTE, self.core, self.kernel):
             return self.behavioral_model(self.core, *self.args, **self.kwargs)
     
-    def run_functional_model(self):
-        if self.functional_model is None:
-            return
+    # def run_functional_model(self):
+    #     if self.functional_model is None:
+    #         return
         
-        with new_global_context(GlobalContextMode.EXECUTE, self.core, self.kernel):
-            return self.functional_model(*self.args, **self.kwargs)
+    #     with new_global_context(GlobalContextMode.EXECUTE, self.core, self.kernel):
+    #         return self.functional_model(*self.args, **self.kwargs)
         
     def run_cycle_model(self) -> int:
         with new_global_context(GlobalContextMode.EXECUTE, self.core, self.kernel):
@@ -371,7 +373,7 @@ class Command:
         return f"Command[cmd_id={self.cmd_id}](args=({', '.join(map(str, self.args))}), kwargs={{{', '.join(f'{k}={v}' for k, v in self.kwargs.items())}}})"
 
 
-class ParallelKernelGroup(list['Kernel']):
+class ThreadGroup(list['Kernel']):
     def __init__(self):
         super().__init__()
     
@@ -404,7 +406,7 @@ class Kernel:
         self._is_compiled = False
         self._is_parallel = False
         
-        self._execution_steps: list[Command | Kernel | ParallelKernelGroup] = []
+        self._execution_steps: list[Command | Kernel | ThreadGroup] = []
         self._execution_cursor: int = 0
         
     def set_parallel(self):
@@ -428,9 +430,9 @@ class Kernel:
             raise Exception(f"[ERROR] Cannot add parallel kernel step to the kernel '{self.kernel_id}' since it is not in compile mode")
         
         if len(self._execution_steps) == 0:
-            self._execution_steps.append(ParallelKernelGroup())
-        elif not isinstance(self._execution_steps[-1], ParallelKernelGroup):
-            self._execution_steps.append(ParallelKernelGroup())
+            self._execution_steps.append(ThreadGroup())
+        elif not isinstance(self._execution_steps[-1], ThreadGroup):
+            self._execution_steps.append(ThreadGroup())
 
         parallel_kernel_idx = len(self._execution_steps[-1])
 
@@ -467,7 +469,7 @@ class Kernel:
             self._execution_cursor += 1
             
     @property
-    def current_step(self) -> 'Command | Kernel | ParallelKernelGroup':
+    def current_step(self) -> 'Command | Kernel | ThreadGroup':
         if not self.is_compiled:
             self.compile()
         if self.is_finished:
@@ -494,27 +496,28 @@ class CoreCycleModel(_CoreModel):
     def __init__(self):
         super().__init__()
 
-class CoreFunctionalModel(_CoreModel):
-    def __init__(self):
-        super().__init__()
+# class CoreFunctionalModel(_CoreModel):
+#     def __init__(self):
+#         super().__init__()
     
     
 class Core:
-    def __init__(self, core_id: str, cycle_model: CoreCycleModel=None, functional_model: CoreFunctionalModel=None):
+    def __init__(self, core_id: str, cycle_model: CoreCycleModel=None  #, functional_model: CoreFunctionalModel=None
+                 ):
         self.core_id = core_id
         
         self._cycle_model:      CoreCycleModel      = cycle_model
-        self._functional_model: CoreFunctionalModel = functional_model
+        # self._functional_model: CoreFunctionalModel = functional_model
 
         self._dispatched_kernels: dict[str, Kernel] = {}
         self._registered_command_debug_hooks: dict[str, Callable[[Command], None]] = {}
         
-        self.use_cycle_model = True
-        self.use_functional_model = True
+        self._use_cycle_model = True
+        self._use_functional_model = True
         
     def change_sim_model_options(self, use_cycle_model: bool = None, use_functional_model: bool = None):
-        self.use_cycle_model = use_cycle_model if use_cycle_model is not None else self.use_cycle_model
-        self.use_functional_model = use_functional_model if use_functional_model is not None else self.use_functional_model
+        self._use_cycle_model = use_cycle_model if use_cycle_model is not None else self._use_cycle_model
+        self._use_functional_model = use_functional_model if use_functional_model is not None else self._use_functional_model
 
     def dispatch_kernel(self, kernel: Kernel):
         if not isinstance(kernel, Kernel):
@@ -591,3 +594,11 @@ class Core:
             if not kernel.is_finished:
                 return False
         return True
+    
+    @property
+    def use_cycle_model(self) -> bool:
+        return self._use_cycle_model
+    
+    @property
+    def use_functional_model(self) -> bool:
+        return self._use_functional_model

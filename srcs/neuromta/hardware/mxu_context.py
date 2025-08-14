@@ -20,7 +20,7 @@ class MXUConfig(dict):
         
         pe_arr_height: int = 32,
         pe_arr_width: int = 32,
-        seq_len: int = 256,
+        seq_len: int = 32,
         dtype: torch.dtype = torch.float32,
         acc_dtype: torch.dtype = torch.float32,
         dataflow: MXUDataflow = MXUDataflow.OS,
@@ -46,7 +46,7 @@ class MXUContext:
         
         pe_arr_height: int = 32,
         pe_arr_width: int = 32,
-        seq_len: int = 256,
+        seq_len: int = 32,
         dtype: torch.dtype = torch.float32,
         acc_dtype: torch.dtype = torch.float32,
         dataflow: MXUDataflow = MXUDataflow.OS,
@@ -66,6 +66,13 @@ class MXUContext:
                 raise Exception(f"[ERROR] The sequence length should be the same with the PE array height for OS dataflow (input output tile shape consistency)")
         
         # Initialize registers
+        self._pe_arr_regs: torch.Tensor = torch.zeros((self.pe_arr_height, self.pe_arr_width), dtype=self._acc_dtype)
+        self._acc_regs:    torch.Tensor = torch.zeros((self.seq_len, self.pe_arr_width), dtype=self._acc_dtype) if self._dataflow == MXUDataflow.WS else None
+
+    def reconfigure_dtype(self, dtype: torch.dtype, acc_dtype: torch.dtype):
+        self._dtype = dtype
+        self._acc_dtype = acc_dtype
+        
         self._pe_arr_regs: torch.Tensor = torch.zeros((self.pe_arr_height, self.pe_arr_width), dtype=self._acc_dtype)
         self._acc_regs:    torch.Tensor = torch.zeros((self.seq_len, self.pe_arr_width), dtype=self._acc_dtype) if self._dataflow == MXUDataflow.WS else None
 

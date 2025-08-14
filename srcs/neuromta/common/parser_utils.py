@@ -1,4 +1,4 @@
-import enum
+import math
 
 
 __all__ = [
@@ -20,11 +20,11 @@ T_UNIT = G_UNIT * 1024
     
 def parse_freq_str(expr: str) -> int:
     if expr.lower().endswith("khz"):
-        expr = int(expr[:-3]) * K_UNIT
+        expr = math.floor(float(expr[:-3]) * K_UNIT)
     elif expr.lower().endswith("mhz"):
-        expr = int(expr[:-3]) * M_UNIT
+        expr = math.floor(float(expr[:-3]) * M_UNIT)
     elif expr.lower().endswith("ghz"):
-        expr = int(expr[:-3]) * G_UNIT
+        expr = math.floor(float(expr[:-3]) * G_UNIT)
     elif expr.lower().endswith("hz"):
         expr = int(expr[:-2])
     else:
@@ -42,11 +42,11 @@ def parse_mem_cap_str(expr: str) -> int:
         expr = expr[:-3]
     
     if expr.lower().endswith("kb"):
-        expr = int(expr[:-2]) * K_UNIT
+        expr = math.floor(float(expr[:-2]) * K_UNIT)
     elif expr.lower().endswith("mb"):
-        expr = int(expr[:-2]) * M_UNIT
+        expr = math.floor(float(expr[:-2]) * M_UNIT)
     elif expr.lower().endswith("gb"):
-        expr = int(expr[:-2]) * G_UNIT
+        expr = math.floor(float(expr[:-2]) * G_UNIT)
     elif expr.lower().endswith("b"):
         expr = int(expr[:-1])
     else:
