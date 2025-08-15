@@ -5,6 +5,12 @@ from neuromta.common import *
 from neuromta.hardware import *
 
 
+__all__ = [
+    "TenstorrentConfig",
+    "TenstorrentDevice",
+]
+
+
 class TenstorrentConfig(dict):
     def __init__(
         self,
