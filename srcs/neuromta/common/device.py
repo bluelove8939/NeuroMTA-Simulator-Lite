@@ -1,7 +1,8 @@
 import sys
+import multiprocessing as mp
 from typing import Sequence, Callable
 
-from neuromta.common.core import Core, Command, DEFAULT_CORE_ID
+from neuromta.common.core import Core, Command
 
 
 __all__ = [
@@ -24,8 +25,7 @@ class CommandTrace:
 class Device:
     def __init__(self):
         self._cores:        dict[str, Core] = None
-        self._timestamp:    int             = 0
-
+        
         self.verbose:       bool = False
         self.create_trace:  bool = False
         
@@ -41,8 +41,9 @@ class Device:
                 if isinstance(item, (Core, Sequence)):
                     self._register_core(f"{name}[{idx}]", item)
         elif isinstance(core, Core):
-            if core.core_id == DEFAULT_CORE_ID:
-                core.core_id = name
+            # if core.core_id == DEFAULT_CORE_ID:
+            #     # core.core_id = name
+            #     raise ValueError(f"[ERROR] Default core ID is deprecated to support RPC framework.")
             if core.core_id in self._cores.keys():
                 raise Exception(f"[ERROR] Core with ID '{core.core_id}' already exists. Please use a unique core ID.")
             self._cores[core.core_id] = core
@@ -55,41 +56,59 @@ class Device:
             if isinstance(core, (Core, Sequence)):
                 self._register_core(name, core)
 
-        self._timestamp = 0
+        rpc_req_send_inbox = {core.core_id: core.rpc_req_recv_queue for core in self._cores.values()}
+        rpc_rsp_send_inbox = {core.core_id: core.rpc_rsp_recv_queue for core in self._cores.values()}
+        
+        for core in self._cores.values():
+            core.initialize(rpc_req_send_inbox=rpc_req_send_inbox, rpc_rsp_send_inbox=rpc_rsp_send_inbox)
         
         if create_trace is not None and isinstance(create_trace, bool):
             self.create_trace = create_trace
         
         return self
-        
+    
     def run_kernels(self, max_steps: int = -1):
         if not self.is_initialized:
             raise Exception("[ERROR] Device is not initialized. Please call initialize() before using this method.")
         
+        step_cnt = 0
+
         while not self.is_idle:
-            cycles = self.get_remaining_cycles()
-            self.update_cycle_time(cycles)
-            
-            self._timestamp += cycles
-            
-            if max_steps > 0 and self._timestamp >= max_steps:
+            for core in self._cores.values():
+                core.update_cycle_time()
+
+            if max_steps > 0 and step_cnt >= max_steps:
                 print(f"[INFO] Reached maximum steps: {max_steps}. Stopping execution.")
                 break
+            
+            step_cnt += 1
+            
+    def run_kernels_mp(self, max_steps: int = -1):
+        if not self.is_initialized:
+            raise Exception("[ERROR] Device is not initialized. Please call initialize() before using this method.")
 
-    def get_remaining_cycles(self) -> int:
-        if not self.is_initialized:
-            raise Exception("[ERROR] Device is not initialized. Please call initialize() before using this method.")
+        def _single_core_run_kernels(core: Core, max_steps: int = -1):
+            step_cnt = 0
+
+            while not core.is_idle:
+                core.update_cycle_time()
+
+                if max_steps > 0 and step_cnt >= max_steps:
+                    print(f"[INFO] Reached maximum steps: {max_steps}. Stopping execution.")
+                    break
+                
+                step_cnt += 1
         
-        return min(map(lambda x: x.get_remaining_cycles(), self._cores.values()))
-    
-    def update_cycle_time(self, cycles: int):
-        if not self.is_initialized:
-            raise Exception("[ERROR] Device is not initialized. Please call initialize() before using this method.")
-        
-        self._timestamp += cycles
-        
+        processes: list[mp.Process] = []
         for core in self._cores.values():
-            core.update_cycle_time(cycles)
+            p = mp.Process(target=_single_core_run_kernels, args=(core, max_steps))
+            processes.append(p)
+            
+        for p in processes:
+            p.start()
+        
+        for p in processes:
+            p.join()
             
     def register_command_debug_hook(self, hook: Callable):
         if not self.is_initialized:
@@ -98,14 +117,14 @@ class Device:
         for core in self._cores.values():
             core.register_command_debug_hook(hook)
     
-    def default_command_debug_hook(self, cmd: Command):
+    def default_command_debug_hook(self, core: Core, cmd: Command):
         if self.verbose:
-            sys.stdout.write(f"[DEBUG] #{self.timestamp:<5d} | core: {cmd.core_id:<24s} | kernel: {cmd.kernel_id:<24s} | command: {cmd.cmd_id:<34s}\n")
-        
+            sys.stdout.write(f"[DEBUG] #{self.timestamp:<5d} | core: {core.core_id.__str__():<24s} | kernel: {cmd.kernel_id:<24s} | command: {cmd.cmd_id:<34s}\n")
+
         if self.create_trace:
             entry = CommandTrace(
-                timestamp=self._timestamp,
-                core_id=cmd.core_id,
+                timestamp=core.timestamp,
+                core_id=core.core_id,
                 kernel_id=cmd.kernel_id,
                 command_id=cmd.cmd_id
             )
@@ -126,11 +145,12 @@ class Device:
             print(f"[WARNING] Command tracing is not enabled. No traces to clear.")
             
         self._traces.clear()
-            
+    
     @property
     def timestamp(self) -> int:
-        return self._timestamp
-        
+        t = [core.timestamp for core in self._cores.values()]
+        return max(t) if t else 0
+
     @property
     def is_initialized(self) -> bool:
         return self._cores is not None

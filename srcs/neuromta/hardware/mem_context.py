@@ -61,17 +61,12 @@ class MemConfig(dict):
 class MemContext:
     def __init__(
         self,  
-        mem_space: MemorySpace,
+        
         l1_config: L1MemoryConfig,
         main_config: MainMemoryConfig,
     ):
-        self._mem_space = mem_space
         self._l1_config = l1_config
         self._main_config = main_config
-
-    @property
-    def mem_space(self) -> MemorySpace:
-        return self._mem_space
     
     @property
     def l1_config(self) -> L1MemoryConfig:

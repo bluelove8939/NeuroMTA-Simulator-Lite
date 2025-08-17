@@ -9,7 +9,7 @@ __all__ = [
     "BufferHandle",
     "CircularBufferHandle",
     "MemoryHandle",
-    "MemorySpace",
+    # "MemorySpace",
     "PointerType",
     "Pointer",
 ]
@@ -209,7 +209,7 @@ class MemoryHandle:
             else:
                 left = mid + 1
                 
-        return False
+        return -1
 
     def create_page_handle(self, addr: int, page_size: int) -> PageHandle:
         if addr < self.base_addr or (addr + page_size) > (self.base_addr + self.size):
@@ -240,7 +240,7 @@ class MemoryHandle:
             addr = self.base_addr + i * page_size
             overlap = self.get_overlapping_page_addr(addr, size=page_size)
             
-            if not overlap:
+            if overlap < 0:
                 allocated_pages.append(self.create_page_handle(addr, page_size))
             else:
                 continue
@@ -255,7 +255,7 @@ class MemoryHandle:
     def get_page_handle(self, addr: int) -> PageHandle:
         overlapping_addr = self.get_overlapping_page_addr(addr, 1)
 
-        if overlapping_addr == False:
+        if overlapping_addr < 0:
             raise KeyError(f"[ERROR] No page found at address {addr} in memory handle with base address {self._base_addr}.")
 
         return self._pages[overlapping_addr]
@@ -263,6 +263,9 @@ class MemoryHandle:
     def clear_pages(self):
         self._pages.clear()
         
+    def create_pointer(self, ptr_id: int | str, handle: Any=None) -> 'Pointer':
+        return Pointer(mem_handle=self, ptr_id=ptr_id, item=handle)
+
     @property
     def mem_id(self) -> str:
         return self._mem_id
@@ -297,28 +300,28 @@ class PointerType(enum.Enum):
 
 
 class Pointer:
-    def __init__(self, mem_space: 'MemorySpace', ptr_id: int | str, item: Any=None):
-        self._mem_space = mem_space
+    def __init__(self, mem_handle: 'MemoryHandle', ptr_id: int | str, item: Any=None):
+        self._mem_handle = mem_handle
         self._ptr_id    = ptr_id
         self._ptr_type  = PointerType.get_pointer_type_with_handle(item)
         self._item      = item
         
         self._cached_mem_handle = None
 
-    def get_mem_handle(self) -> 'MemoryHandle':
-        if self._ptr_type != PointerType.PAGE:
-            raise Exception(f"[ERROR] Pointer type {self._ptr_type.name} does not have a memory handle.")
+    # def get_mem_handle(self) -> 'MemoryHandle':
+    #     if self._ptr_type != PointerType.PAGE:
+    #         raise Exception(f"[ERROR] Pointer type {self._ptr_type.name} does not have a memory handle.")
         
-        if self._cached_mem_handle is None:
-            page: PageHandle = self.handle
-            self._cached_mem_handle = self._mem_space.get_memory_handle_with_addr(page.addr)
+    #     if self._cached_mem_handle is None:
+    #         page: PageHandle = self.handle
+    #         self._cached_mem_handle = self._mem_space.get_memory_handle_with_addr(page.addr)
 
-        return self._cached_mem_handle
+    #     return self._cached_mem_handle
     
     def get_base_addr(self) -> int:
         if self._ptr_type != PointerType.PAGE:
             raise Exception(f"[ERROR] Pointer type {self._ptr_type.name} does not have a memory handle.")
-        mem_handle = self.get_mem_handle()
+        mem_handle = self.mem_handle
         return mem_handle.base_addr
     
     def clear(self):
@@ -329,11 +332,11 @@ class Pointer:
         if self._ptr_type == PointerType.BUFFER:
             buffer: BufferHandle = self.handle
             if isinstance(item, int):
-                return Pointer(mem_space=self._mem_space, ptr_id=f"{self.ptr_id}[{item}]", item=buffer.get_page_handle(item))
+                return Pointer(mem_handle=self.mem_handle, ptr_id=f"{self.ptr_id}[{item}]", item=buffer.get_page_handle(item))
             elif isinstance(item, slice):
-                return [Pointer(mem_space=self._mem_space, ptr_id=f"{self.ptr_id}[{i}]", item=buffer.get_page_handle(i)) for i in range(item.start, item.stop)]
+                return [Pointer(mem_handle=self.mem_handle, ptr_id=f"{self.ptr_id}[{i}]", item=buffer.get_page_handle(i)) for i in range(item.start, item.stop)]
             elif isinstance(item, tuple):
-                return [Pointer(mem_space=self._mem_space, ptr_id=f"{self.ptr_id}[{i}]", item=buffer.get_page_handle(i)) for i in item]
+                return [Pointer(mem_handle=self.mem_handle, ptr_id=f"{self.ptr_id}[{i}]", item=buffer.get_page_handle(i)) for i in item]
         return super().__getitem__(item)
 
     def __hash__(self):
@@ -376,6 +379,10 @@ class Pointer:
         
         return self._item
     
+    @property
+    def mem_handle(self) -> MemoryHandle:
+        return self._mem_handle
+    
     @sem.setter
     def sem(self, value: Semaphore):
         if not isinstance(value, Semaphore):
@@ -386,148 +393,3 @@ class Pointer:
 
     def __str__(self):
         return f"Pointer(id={self._ptr_id}, type={self._ptr_type.name})"
-    
-    
-class MemorySpace:
-    def __init__(self):
-        self._mem_handles_with_base_addr: dict[int, MemoryHandle] = {}
-        self._mem_handles_with_mem_id   : dict[str, MemoryHandle] = {}
-        
-    def get_overlapping_mem_handle_addr(self, base_addr: int, size: int) -> int: # returns False if the address space is not overlapping with any memory handles
-        keys = sorted(self._mem_handles_with_base_addr.keys())
-        left, right = 0, len(keys) - 1
-
-        while left <= right:
-            mid = (left + right) // 2
-            mid_addr = keys[mid]
-            mem_handle = self._mem_handles_with_base_addr[mid_addr]
-
-            if not (base_addr + size <= mem_handle.base_addr or base_addr >= mem_handle.base_addr + mem_handle.size):
-                return mid_addr
-            if base_addr < mem_handle.base_addr:
-                right = mid - 1
-            else:
-                left = mid + 1
-                
-        return False
-
-    def create_memory_handle(self, mem_id: str, base_addr: int, size: int) -> MemoryHandle:
-        if self.get_overlapping_mem_handle_addr(base_addr, size) != False:
-            raise ValueError(f"[ERROR] Memory handle at address {base_addr} with size {size} overlaps with existing handle.")
-        
-        mem_handle = MemoryHandle(mem_id=mem_id, base_addr=base_addr, size=size)
-        self._mem_handles_with_base_addr[base_addr] = mem_handle
-        self._mem_handles_with_mem_id[mem_id] = mem_handle
-        
-        return mem_handle
-
-    def clear_memory_handles(self):
-        self._mem_handles_with_base_addr.clear()
-        self._mem_handles_with_mem_id.clear()
-        
-    def get_memory_handle_with_addr(self, addr: int) -> MemoryHandle:
-        overlapping_addr = self.get_overlapping_mem_handle_addr(addr, 1)
-        
-        if overlapping_addr == False:
-            raise KeyError(f"[ERROR] No memory handle found at address {addr}.")
-        
-        return self._mem_handles_with_base_addr[overlapping_addr]
-
-    def get_memory_handle_with_id(self, mem_id: str) -> MemoryHandle:
-        return self._mem_handles_with_mem_id.get(mem_id, None)
-
-    def get_page_handle(self, addr: int) -> PageHandle:
-        mem_handle = self.get_memory_handle_with_addr(addr)
-        page = mem_handle.get_page_handle(addr)
-        return page
-    
-    def create_pointer(self, ptr_id: int | str, handle: Any=None) -> Pointer:
-        return Pointer(mem_space=self, ptr_id=ptr_id, item=handle)
-
-
-if __name__ == "__main__":
-    torch.set_printoptions(linewidth=1024)
-    
-    M = 16
-    N = 16
-    Mt = 4
-    Nt = 4
-    dtype = torch.int32
-    
-    page_size = Mt * Nt * dtype.itemsize
-    n_pages = M * N * dtype.itemsize // page_size
-    
-    mem_space = MemorySpace()
-    main_mem     = mem_space.create_memory_handle("MAIN",     base_addr=0,                                          size=1024 * page_size)
-    l1_mem_bank1 = mem_space.create_memory_handle("L1_BANK1", base_addr=main_mem.base_addr     + main_mem.size,     size=16   * page_size)
-    l1_mem_bank2 = mem_space.create_memory_handle("L1_BANK2", base_addr=l1_mem_bank1.base_addr + l1_mem_bank1.size, size=16   * page_size)
-
-    pages: list[PageHandle] = []
-    
-    for i in range(n_pages // 2):
-        pages.append(main_mem.create_page_handle(addr=main_mem.base_addr + i * page_size, page_size=page_size))
-    for i in range(n_pages // 2 // 2):
-        pages.append(l1_mem_bank1.create_page_handle(addr=l1_mem_bank1.base_addr + i * page_size, page_size=page_size))
-    for i in range(n_pages // 2 // 2):  
-        pages.append(l1_mem_bank2.create_page_handle(addr=l1_mem_bank2.base_addr + i * page_size, page_size=page_size))
-        
-    buffer_handle = BufferHandle(page_size=page_size, pages=pages)
-    
-    pages[0].set_content(torch.ones((Mt, Nt), dtype=dtype))
-        
-    print(buffer_handle.content_view(shape=(M, N), dtype=dtype))
-
-
-# if __name__ == "__main__":
-#     torch.set_printoptions(linewidth=1024)
-#
-#     # Example usage
-#     M = 16
-#     N = 16
-#     Mt = 4
-#     Nt = 4
-#     dtype = torch.int32
-    
-#     page_size = Mt * Nt * dtype.itemsize
-#     n_pages = M * N * dtype.itemsize // page_size
-    
-#     pages = [PageHandle(addr=i * page_size, size=page_size) for i in range(n_pages)]
-    
-#     buffer_handle = BufferHandle(page_size=page_size, pages=pages)
-    
-#     pages[0].set_content(torch.ones((Mt, Nt), dtype=dtype))
-        
-#     print(buffer_handle.content_view(shape=(M, N), dtype=dtype))
-
-
-# if __name__ == "__main__":
-#     torch.set_printoptions(linewidth=1024)
-    
-#     # Example usage
-#     M = 16
-#     N = 16
-#     Mt = 4
-#     Nt = 4
-#     dtype = torch.int32
-    
-#     page_size = Mt * Nt * dtype.itemsize
-#     n_pages = M * N * dtype.itemsize // page_size
-    
-#     pages = [PageHandle(addr=i * page_size, size=page_size) for i in range(n_pages)]
-    
-#     buffer_handle = BufferHandle(page_size=page_size, pages=pages)
-    
-#     # Create a tensor to set as content
-#     #   - Make sure that the tensor is contiguous if you want any modification of the buffer handle to be reflected directly to the original tensor
-#     #   - It may be related to the memory usage of the simulator ...
-#     content_tensor = torch.zeros((M, N), dtype=torch.int32).reshape((M // Mt, Mt, N // Nt, Nt)).permute(0, 2, 1, 3).contiguous()    
-    
-#     buffer_handle.set_content(content_tensor)
-#     buffer_handle.pages[0].content_view(shape=(Mt, Nt), dtype=dtype)[:, :] = 1
-
-#     # Access the content of the first page
-#     for page_idx, page in enumerate(buffer_handle.pages):
-#         print(f"Page {page_idx:<2d} at address {page.addr:<3d} has content: {page.content}")
-        
-#     print(buffer_handle.content_view(shape=(M // Mt, N // Nt, Mt, Nt), dtype=dtype)[0, 0])
-#     print(content_tensor[0, 0])

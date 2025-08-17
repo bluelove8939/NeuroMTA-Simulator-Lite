@@ -19,6 +19,7 @@ __all__ = [
 class NPUCore(Core):
     def __init__(
         self,
+        core_id: str,
         coord: tuple[int, int],
         mem_context: MemContext, 
         icnt_context: IcntContext,
@@ -26,13 +27,16 @@ class NPUCore(Core):
         mxu_config: MXUConfig = MXUConfig(),
     ):
         super().__init__(
-            core_id=DEFAULT_CORE_ID, 
+            # core_id=DEFAULT_CORE_ID, 
+            core_id=core_id,
             cycle_model=NPUCoreCycleModel(core=self),
         )
         
         self.coord = coord
         self.mem_context = mem_context
         self.icnt_context = icnt_context
+        
+        self.mem_handle = MemoryHandle(mem_id=self.coord.__str__(), base_addr=0, size=self.icnt_context._l1_mem_bank_size)
         
         self.mxu_context = mxu_config.create_context()
         self.vpu_context = vpu_config.create_context()
@@ -74,15 +78,13 @@ class NPUCore(Core):
     
     @core_command_method
     def cb_create(self, ptr: Pointer, page_size: int, n_pages: int):
-        mem_handle = self.icnt_context.get_memory_handle_with_coord(self.coord)
-        pages = mem_handle.allocate_page_handles(page_size=page_size, n_pages=n_pages)
+        pages = self.mem_handle.allocate_page_handles(page_size=page_size, n_pages=n_pages)
         ptr.handle = CircularBufferHandle(page_size=page_size, pages=pages)
     
     @core_command_method
     def cb_remove(self, ptr: Pointer):
-        mem_handle = self.icnt_context.get_memory_handle_with_coord(self.coord)
         cb_handle: CircularBufferHandle = ptr.handle
-        mem_handle.deallocate_page_handles(cb_handle.pages)
+        self.mem_handle.deallocate_page_handles(cb_handle.pages)
         ptr.clear()
 
     @core_command_method
@@ -113,15 +115,13 @@ class NPUCore(Core):
     
     @core_command_method
     def l1_buff_create(self, ptr: Pointer, page_size: int, n_pages: int):
-        mem_handle = self.icnt_context.get_memory_handle_with_coord(self.coord)
-        pages = mem_handle.allocate_page_handles(page_size=page_size, n_pages=n_pages)
+        pages = self.mem_handle.allocate_page_handles(page_size=page_size, n_pages=n_pages)
         ptr.handle = BufferHandle(page_size=page_size, pages=pages)
         
     @core_command_method
     def l1_buff_remove(self, ptr: Pointer):
-        mem_handle = self.icnt_context.get_memory_handle_with_coord(self.coord)
         buff_handle: BufferHandle = ptr.handle
-        mem_handle.deallocate_page_handles(buff_handle.pages)
+        self.mem_handle.deallocate_page_handles(buff_handle.pages)
         ptr.clear()
         
     @core_command_method

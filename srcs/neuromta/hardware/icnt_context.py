@@ -68,8 +68,6 @@ class IcntContext:
     def __init__(
         self,
         
-        mem_space: MemorySpace,
-        
         core_map: IcntCoreMap,
         l1_mem_bank_size: int,
         main_mem_bank_size: int,
@@ -91,9 +89,7 @@ class IcntContext:
 
         for coord in self._core_map.core_coord(IcntCoreType.DMA):
             mem_id = f"MAIN{tuple(coord)}"
-            mem_handle = mem_space.create_memory_handle(mem_id, mem_base_addr, self._main_mem_bank_size)
             
-            self._coord_to_mem_handle_mappings[coord] = mem_handle
             self._base_addr_to_coord_mappings[mem_base_addr] = coord
             self._main_mem_ids.append(mem_id)
 
@@ -101,36 +97,11 @@ class IcntContext:
         
         for coord in self._core_map.core_coord(IcntCoreType.NPU):
             mem_id = f"L1{tuple(coord)}"
-            mem_handle = mem_space.create_memory_handle(mem_id, mem_base_addr, self._l1_mem_bank_size)
             
-            self._coord_to_mem_handle_mappings[coord] = mem_handle
             self._base_addr_to_coord_mappings[mem_base_addr] = coord
             self._l1_mem_ids.append(mem_id)
 
             mem_base_addr += self._l1_mem_bank_size
-            
-    def check_mem_handle_is_l1(self, mem_handle: MemoryHandle) -> bool:
-        return mem_handle.mem_id in self._l1_mem_ids
-    
-    def check_mem_handle_is_main(self, mem_handle: MemoryHandle) -> bool:
-        return mem_handle.mem_id in self._main_mem_ids
-            
-    def get_memory_handle_with_coord(self, coord: tuple[int, int]) -> MemoryHandle:
-        return self._coord_to_mem_handle_mappings[coord]
-    
-    def get_coord_with_mem_base_addr(self, base_addr: int) -> tuple[int, int]:
-        return self._base_addr_to_coord_mappings[base_addr]
-    
-    def compute_hop_cnt(self, src_coord: tuple[int, int], dst_coord: tuple[int, int]) -> int:
-        return abs(src_coord[0] - dst_coord[0]) + abs(src_coord[1] - dst_coord[1])
-    
-    def get_control_packet_latency(self, src_coord: tuple[int, int], dst_coord: tuple[int, int]) -> int:
-        hop_cnt = self.compute_hop_cnt(src_coord, dst_coord)
-        return hop_cnt + (self._control_packet_size // self._flit_size)
-    
-    def get_data_packet_latency(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int) -> int:
-        hop_cnt = self.compute_hop_cnt(src_coord, dst_coord)
-        return hop_cnt + (data_size // self._flit_size) + 1
     
     @property
     def core_map(self) -> IcntCoreMap:
