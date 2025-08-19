@@ -2,7 +2,7 @@ import math
 import enum
 from typing import Any, Sequence
 
-from neuromta.common import *
+from neuromta.framework import *
 
 from neuromta.hardware.mem_context import MemContext
 from neuromta.hardware.icnt_context import IcntContext
@@ -19,7 +19,6 @@ __all__ = [
 class NPUCore(Core):
     def __init__(
         self,
-        core_id: str,
         coord: tuple[int, int],
         mem_context: MemContext, 
         icnt_context: IcntContext,
@@ -27,8 +26,7 @@ class NPUCore(Core):
         mxu_config: MXUConfig = MXUConfig(),
     ):
         super().__init__(
-            # core_id=DEFAULT_CORE_ID, 
-            core_id=core_id,
+            core_id=coord,  # coordinate is the core ID (it is guaranteed that each core is assigned with a unique coordinate in the given core grid!)
             cycle_model=NPUCoreCycleModel(core=self),
         )
         
@@ -36,7 +34,11 @@ class NPUCore(Core):
         self.mem_context = mem_context
         self.icnt_context = icnt_context
         
-        self.mem_handle = MemoryHandle(mem_id=self.coord.__str__(), base_addr=0, size=self.icnt_context._l1_mem_bank_size)
+        self.local_mem_handle = MemoryHandle(
+            mem_id=self.coord.__str__(), 
+            base_addr=self.icnt_context.get_base_addr_from_coord(self.coord), 
+            size=self.icnt_context._l1_mem_bank_size
+        )
         
         self.mxu_context = mxu_config.create_context()
         self.vpu_context = vpu_config.create_context()
@@ -50,27 +52,29 @@ class NPUCore(Core):
         
     @core_command_method
     def sem_create(self, ptr: Pointer, initial_value: int=0):
-        ptr.sem = Semaphore(initial_value)
+        sem = self.local_mem_handle.allocate_variable_handle(initial_value=initial_value)
+        ptr.var = sem
     
     @core_command_method
     def sem_remove(self, ptr: Pointer):
+        self.local_mem_handle.deallocate_variable_handle(ptr.var)
         ptr.clear()
         
     @core_command_method
     def sem_set_value(self, ptr: Pointer, value: int):
-        ptr.sem.value = value
+        ptr.var.value = value
 
     @core_command_method
     def sem_increase(self, ptr: Pointer, value: int=1):
-        ptr.sem.value += value
+        ptr.var.value += value
 
     @core_command_method
     def sem_decrease(self, ptr: Pointer, value: int=1):
-        ptr.sem.value -= value
+        ptr.var.value -= value
 
     @core_command_method
     def sem_wait(self, ptr: Pointer, value: int=0):
-        return ptr.sem.value == value
+        return ptr.var.value == value
 
     #############################################################
     # Circular Buffer Management (Intra-Core Control Management)
@@ -78,13 +82,13 @@ class NPUCore(Core):
     
     @core_command_method
     def cb_create(self, ptr: Pointer, page_size: int, n_pages: int):
-        pages = self.mem_handle.allocate_page_handles(page_size=page_size, n_pages=n_pages)
+        pages = self.local_mem_handle.allocate_page_handles(page_size=page_size, n_pages=n_pages)
         ptr.handle = CircularBufferHandle(page_size=page_size, pages=pages)
     
     @core_command_method
     def cb_remove(self, ptr: Pointer):
         cb_handle: CircularBufferHandle = ptr.handle
-        self.mem_handle.deallocate_page_handles(cb_handle.pages)
+        self.local_mem_handle.deallocate_page_handles(cb_handle.pages)
         ptr.clear()
 
     @core_command_method
@@ -110,50 +114,6 @@ class NPUCore(Core):
         cb_handle.deallocate_cb_space(n_pages)
         
     #############################################################
-    # Buffer Management (Main Memory Management)
-    #############################################################
-    
-    @core_command_method
-    def l1_buff_create(self, ptr: Pointer, page_size: int, n_pages: int):
-        pages = self.mem_handle.allocate_page_handles(page_size=page_size, n_pages=n_pages)
-        ptr.handle = BufferHandle(page_size=page_size, pages=pages)
-        
-    @core_command_method
-    def l1_buff_remove(self, ptr: Pointer):
-        buff_handle: BufferHandle = ptr.handle
-        self.mem_handle.deallocate_page_handles(buff_handle.pages)
-        ptr.clear()
-        
-    @core_command_method
-    def copy_page(self, src_ptr: Pointer, dst_ptr: Pointer):
-        if src_ptr.ptr_type != PointerType.PAGE or dst_ptr.ptr_type != PointerType.PAGE:
-            raise Exception("[ERROR] copy_pages can only be used with PAGE pointers.")
-        
-        if not self.use_functional_model:
-            return  # Terminate the command to reduce the simulation time without actual MXU functional unit (do not return anything to make sure that the command is executed only once)
-
-        src_page: PageHandle = src_ptr.handle
-        dst_page: PageHandle = dst_ptr.handle
-        dst_page.copy_from(src_page)
-        
-    @core_kernel_method
-    def copy_buffer(self, src_ptr: Pointer, dst_ptr: Pointer, src_offset_idx: int, dst_offset_idx: int, n_pages: int, parallel: bool = False):
-        if src_ptr.ptr_type != PointerType.BUFFER or dst_ptr.ptr_type != PointerType.BUFFER:
-            raise Exception("[ERROR] copy_buffers can only be used with BUFFER pointers.")
-
-        if not self.use_functional_model:
-            return  # Terminate the command to reduce the simulation time without actual MXU functional unit (do not return anything to make sure that the command is executed only once)
-
-        for i in range(n_pages):
-            if parallel:
-                start_parallel_thread()
-                
-            self.copy_page(src_ptr[src_offset_idx + i], dst_ptr[dst_offset_idx + i])
-            
-            if parallel:
-                end_parallel_thread()
-
-    #############################################################
     # Lock Management
     #############################################################
     
@@ -170,7 +130,172 @@ class NPUCore(Core):
     def _check_pid_is_locked_with(self, lock: TicketLock):
         pid = get_global_pid()
         return lock.is_locked_with(key=pid)
+    
+    #############################################################
+    # NoC
+    #############################################################
+    
+    @core_command_method
+    def noc_control_packet_transfer(self, dst_core_coord: tuple[int, int]):
+        pass  # TODO: currently, NoC simulator is not implemented, BookSim2 will be integrated later.
+    
+    @core_command_method
+    def noc_data_packet_transfer(self, dst_core_coord: tuple[int, int], data_size: int):
+        pass  # TODO: currently, NoC simulator is not implemented, BookSim2 will be integrated later.
         
+    #############################################################
+    # Buffer Management
+    #############################################################
+    
+    @core_command_method
+    def local_buffer_allocate(self, ptr: Pointer, page_size: int, n_pages: int):
+        pages = self.local_mem_handle.allocate_page_handles(page_size=page_size, n_pages=n_pages)
+        ptr.handle = BufferHandle(page_size=page_size, pages=pages)
+        
+    @core_command_method
+    def local_buffer_deallocate(self, ptr: Pointer):
+        buff_handle: BufferHandle = ptr.handle
+        self.local_mem_handle.deallocate_page_handles(buff_handle.pages)
+        ptr.clear()
+        
+    @core_command_method
+    def local_memcopy_page(self, dst_ptr: Pointer, src_ptr: Pointer):
+        if dst_ptr.ptr_type != PointerType.PAGE or src_ptr.ptr_type != PointerType.PAGE:
+            raise ValueError("[ERROR] Memory copy requires page pointers.")
+        
+        dst_handle: PageHandle = dst_ptr.handle
+        src_handle: PageHandle = src_ptr.handle
+
+        if dst_handle.size != src_handle.size:
+            raise ValueError(f"[ERROR] Page sizes do not match: {dst_handle.size} != {src_handle.size}")
+
+        dst_handle.copy_from(src_handle)
+        
+    @core_kernel_method
+    def local_memcopy_buffer(self, dst_ptr: Pointer, dst_offset_page_idx: int, src_ptr: Pointer, src_offset_page_idx: int, n_pages: int):
+        if dst_ptr.ptr_type != PointerType.BUFFER or src_ptr.ptr_type != PointerType.BUFFER:
+            raise ValueError("[ERROR] Memory copy requires buffer pointers.")
+        
+        dst_st = dst_offset_page_idx
+        dst_ed = dst_st + n_pages
+        
+        src_st = src_offset_page_idx
+        src_ed = src_st + n_pages
+        
+        dst_ptrs = dst_ptr[dst_st:dst_ed]
+        src_ptrs = src_ptr[src_st:src_ed]
+
+        for dst_ptr, src_ptr in zip(dst_ptrs, src_ptrs):
+            self.local_memcopy_page(dst_ptr, src_ptr)
+            
+    @core_kernel_method
+    def _local_memcopy_page_and_transfer(self, dst_ptr: Pointer, src_ptr: Pointer):
+        if dst_ptr.ptr_type != PointerType.PAGE or src_ptr.ptr_type != PointerType.PAGE:
+            raise ValueError("[ERROR] Memory copy requires page pointers.")
+
+        dst_owner_id = self.icnt_context.get_coord_from_address(dst_ptr.handle.addr)
+
+        self.local_memcopy_page(dst_ptr, src_ptr)
+        self.noc_data_packet_transfer(dst_core_coord=dst_owner_id, data_size=src_ptr.handle.size)
+
+    #############################################################
+    # Remote
+    #############################################################
+
+    @core_kernel_method
+    def remote_memcopy_page(self, dst_ptr: Pointer, src_ptr: Pointer):
+        if dst_ptr.ptr_type != PointerType.PAGE or src_ptr.ptr_type != PointerType.PAGE:
+            raise ValueError("[ERROR] Memory copy requires page pointers.")
+        
+        src_owner_id = self.icnt_context.get_coord_from_address(src_ptr.handle.addr)
+        
+        if src_owner_id is None:
+            raise Exception(f"[ERROR] Invalid destination core ID: {src_owner_id}. The address {src_ptr.handle.addr} does not map to a valid core.")
+
+        msg = RPCMessage(
+            msg_type=0,
+            src_core_id=self.core_id,
+            dst_core_id=src_owner_id,    # the destination of the RPC message is the source of the data 
+            kernel_id=get_global_kernel_context().kernel_id,
+            cmd_id="_local_memcopy_page_and_transfer",  # the remote core will read its local memory and transfer the data packet to myself!
+            src_ptr=src_ptr,
+            dst_ptr=dst_ptr,
+        )
+        
+        self.noc_control_packet_transfer(dst_core_coord=src_owner_id)
+        self.remote_rpc_send_request_msg(msg)
+        
+    @core_kernel_method
+    def remote_memcopy_buffer(self, dst_ptr: Pointer, dst_offset_page_idx: int, src_ptr: Pointer, src_offset_page_idx: int, n_pages: int):
+        if dst_ptr.ptr_type != PointerType.BUFFER or src_ptr.ptr_type != PointerType.BUFFER:
+            raise ValueError("[ERROR] Memory copy requires buffer pointers.")
+        
+        dst_st = dst_offset_page_idx
+        dst_ed = dst_st + n_pages
+        
+        src_st = src_offset_page_idx
+        src_ed = src_st + n_pages
+        
+        dst_ptrs = dst_ptr[dst_st:dst_ed]
+        src_ptrs = src_ptr[src_st:src_ed]
+
+        for dst_ptr, src_ptr in zip(dst_ptrs, src_ptrs):
+            self.remote_memcopy_page(dst_ptr, src_ptr)
+            
+    @core_kernel_method
+    def remote_sem_set_value(self, ptr: Pointer, value: int):
+        if ptr.ptr_type != PointerType.VARIABLE:
+            raise ValueError("[ERROR] Semaphore set value requires semaphore pointer.")
+        
+        msg = RPCMessage(
+            msg_type=0,
+            src_core_id=self.core_id,
+            dst_core_id=self.icnt_context.get_coord_from_address(ptr.handle.addr),
+            kernel_id=get_global_kernel_context().kernel_id,
+            cmd_id="sem_set_value",
+            ptr=ptr,
+            value=value
+        )
+        
+        self.noc_control_packet_transfer(dst_core_coord=msg.dst_core_id)
+        self.remote_rpc_send_request_msg(msg)
+        
+    @core_kernel_method
+    def remote_sem_increase(self, ptr: Pointer, value: int=1):
+        if ptr.ptr_type != PointerType.VARIABLE:
+            raise ValueError("[ERROR] Semaphore increase requires semaphore pointer.")
+        
+        msg = RPCMessage(
+            msg_type=0,
+            src_core_id=self.core_id,
+            dst_core_id=self.icnt_context.get_coord_from_address(ptr.handle.addr),
+            kernel_id=get_global_kernel_context().kernel_id,
+            cmd_id="sem_increase",
+            ptr=ptr,
+            value=value
+        )
+        
+        self.noc_control_packet_transfer(dst_core_coord=msg.dst_core_id)
+        self.remote_rpc_send_request_msg(msg)
+        
+    @core_kernel_method
+    def remote_sem_decrease(self, ptr: Pointer, value: int=1):
+        if ptr.ptr_type != PointerType.VARIABLE:
+            raise ValueError("[ERROR] Semaphore decrease requires semaphore pointer.")
+
+        msg = RPCMessage(
+            msg_type=0,
+            src_core_id=self.core_id,
+            dst_core_id=self.icnt_context.get_coord_from_address(ptr.handle.addr),
+            kernel_id=get_global_kernel_context().kernel_id,
+            cmd_id="sem_decrease",
+            ptr=ptr,
+            value=value
+        )
+
+        self.noc_control_packet_transfer(dst_core_coord=msg.dst_core_id)
+        self.remote_rpc_send_request_msg(msg)
+
     #############################################################
     # MXU Commands
     #############################################################
@@ -302,38 +427,29 @@ class NPUCoreCycleModel(CoreCycleModel):
         
         self.core = core
         
-    def copy_page(self, src_ptr: Pointer, dst_ptr: Pointer):
-        if src_ptr.ptr_type != PointerType.PAGE or dst_ptr.ptr_type != PointerType.PAGE:
-            raise Exception("[ERROR] copy_pages can only be used with PAGE pointers.")
-        
-        src_page: PageHandle = src_ptr.handle
-        dst_page: PageHandle = dst_ptr.handle
-        
-        if src_page.size != dst_page.size:
-            raise Exception(f"[ERROR] Source page size ({src_page.size}) does not match destination page size ({dst_page.size}).")
-        
-        src_coord = self.core.icnt_context.get_coord_with_mem_base_addr(src_ptr.get_base_addr())
-        dst_coord = self.core.icnt_context.get_coord_with_mem_base_addr(dst_ptr.get_base_addr())
-
-        icnt_cycles = 0
-        mem_cycles = 0
-
-        if src_coord != dst_coord:
-            icnt_cycles += self.core.icnt_context.get_control_packet_latency(dst_coord, src_coord)
-            icnt_cycles += self.core.icnt_context.get_data_packet_latency(src_coord, dst_coord, data_size=src_page.size)
-
-        if self.core.icnt_context.check_mem_handle_is_l1(src_ptr.get_mem_handle()):
-            mem_cycles += self.core.mem_context.l1_config.get_cycles(size=src_page.size)
-        else:
-            mem_cycles += self.core.mem_context.main_config.get_cycles(size=src_page.size)
-        
-        if self.core.icnt_context.check_mem_handle_is_l1(dst_ptr.get_mem_handle()):
-            mem_cycles += self.core.mem_context.l1_config.get_cycles(size=dst_page.size)
-        else:
-            mem_cycles += self.core.mem_context.main_config.get_cycles(size=dst_page.size)
-
-        return icnt_cycles + mem_cycles
+    def noc_control_packet_transfer(self, dst_core_coord: tuple[int, int]):
+        return self.core.icnt_context.get_control_packet_latency(src_coord=self.core.coord, dst_coord=dst_core_coord)   # TODO: simple NoC latency model, further be refined by BookSim2 
     
+    def noc_data_packet_transfer(self, dst_core_coord: tuple[int, int], data_size: int):
+        return self.core.icnt_context.get_data_packet_latency(src_coord=self.core.coord, dst_coord=dst_core_coord, data_size=data_size)   # TODO: simple NoC latency model, further be refined by BookSim2
+
+    def local_memcopy_page(self, dst_ptr: Pointer, src_ptr: Pointer):
+        if dst_ptr.ptr_type != PointerType.PAGE or src_ptr.ptr_type != PointerType.PAGE:
+            raise ValueError("[ERROR] Memory copy requires page pointers.")
+        
+        src_handle: PageHandle = src_ptr.handle
+        
+        return self.core.mem_context.l1_config.get_cycles(size=src_handle.size)
+    
+    def remote_memcopy_page(self, dst_ptr: Pointer, src_ptr: Pointer):
+        if dst_ptr.ptr_type != PointerType.PAGE or src_ptr.ptr_type != PointerType.PAGE:
+            raise ValueError("[ERROR] Memory copy requires page pointers.")
+        
+        src_handle: PageHandle = src_ptr.handle
+        src_owner_coord = self.core.icnt_context.get_coord_from_address(src_handle.addr)
+
+        return self.core.icnt_context.get_control_packet_latency(src_coord=self.core.coord, dst_coord=src_owner_coord, data_size=src_handle.size)
+
     def mxu_tiled_gemm(
         self, 
         ifm_ptr:  Pointer,

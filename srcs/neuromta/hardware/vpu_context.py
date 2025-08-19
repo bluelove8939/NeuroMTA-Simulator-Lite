@@ -1,7 +1,7 @@
 import enum
 import torch
 
-from neuromta.common.parser_utils import parse_mem_cap_str
+from neuromta.framework.parser_utils import parse_mem_cap_str
 
 
 __all__ = [

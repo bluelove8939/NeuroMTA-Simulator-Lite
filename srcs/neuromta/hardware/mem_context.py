@@ -1,5 +1,5 @@
 import math
-from neuromta.common import *
+from neuromta.framework import *
 
 
 __all__ = [
