@@ -1,7 +1,7 @@
 from neuromta.framework import *
 
-from neuromta.hardware.context.mem_context import MemContext
-from neuromta.hardware.context.icnt_context import IcntContext
+from neuromta.hardware.multi_tile.context.mem_context import MemContext
+from neuromta.hardware.multi_tile.context.icnt_context import IcntContext
 
 
 __all__ = [

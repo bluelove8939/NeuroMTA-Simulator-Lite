@@ -2,7 +2,7 @@ import enum
 import torch
 
 from neuromta.framework import *
-from neuromta.hardware import *
+from neuromta.hardware.multi_tile import *
 
 
 __all__ = [

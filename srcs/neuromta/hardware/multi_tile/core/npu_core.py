@@ -2,10 +2,10 @@ import torch
 
 from neuromta.framework import *
 
-from neuromta.hardware.context.mem_context import MemContext
-from neuromta.hardware.context.icnt_context import IcntContext
-from neuromta.hardware.context.vpu_context import VPUContext, VPUConfig, VPUOperator
-from neuromta.hardware.context.mxu_context import MXUContext, MXUConfig, MXUDataflow
+from neuromta.hardware.multi_tile.context.mem_context import MemContext
+from neuromta.hardware.multi_tile.context.icnt_context import IcntContext
+from neuromta.hardware.multi_tile.context.vpu_context import VPUContext, VPUConfig, VPUOperator
+from neuromta.hardware.multi_tile.context.mxu_context import MXUContext, MXUConfig, MXUDataflow
 
 
 __all__ = [

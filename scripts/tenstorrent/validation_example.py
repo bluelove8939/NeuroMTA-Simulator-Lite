@@ -2,7 +2,7 @@ import os
 import torch
 
 from neuromta.framework import *
-from neuromta.hardware import *
+from neuromta.hardware.multi_tile import *
 from neuromta.ip.tenstorrent.architecture import TenstorrentConfig, TenstorrentDevice
 
 

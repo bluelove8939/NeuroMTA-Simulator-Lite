@@ -3,14 +3,14 @@ import torch
 
 from neuromta.framework import *
 
-from neuromta.hardware.context.mem_context import *
-from neuromta.hardware.context.icnt_context import *
-from neuromta.hardware.context.mxu_context import *
-from neuromta.hardware.context.vpu_context import *
+from neuromta.hardware.multi_tile.context.mem_context import *
+from neuromta.hardware.multi_tile.context.icnt_context import *
+from neuromta.hardware.multi_tile.context.mxu_context import *
+from neuromta.hardware.multi_tile.context.vpu_context import *
 
-from neuromta.hardware.core.npu_core import *
-from neuromta.hardware.core.dma_core import *
-from neuromta.hardware.core.icnt_core import *
+from neuromta.hardware.multi_tile.core.npu_core import *
+from neuromta.hardware.multi_tile.core.dma_core import *
+from neuromta.hardware.multi_tile.core.icnt_core import *
 
 
 __all__ = [
