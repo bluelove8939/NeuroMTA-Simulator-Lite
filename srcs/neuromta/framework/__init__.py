@@ -5,3 +5,4 @@ from neuromta.framework.device import *
 from neuromta.framework.memory_handle import *
 from neuromta.framework.parser_utils import *
 from neuromta.framework.synchronizer import *
+from neuromta.framework.tracer import *

@@ -12,6 +12,9 @@ __all__ = [
 ]
 
 
+ICNT_CORE_NAME = "ICNT"
+
+
 class IcntCoreType(int):
     EMPTY   = 0
     NPU     = 1
@@ -30,7 +33,7 @@ class IcntCoreMap:
             if not IcntCoreType.is_valid_core_type(core_type):
                 raise TypeError(f"The core type {core_type} is not a valid Tenstorrent core type.")
 
-    def core_coord(self, core_type: IcntCoreType) -> tuple[int, int]:
+    def core_coord(self, core_type: IcntCoreType) -> tuple[tuple[int, int]]:
         coords = torch.argwhere(self._grid == core_type)
         if coords.size == 0:
             raise ValueError(f"No core of type {core_type} found in the core map.")
@@ -50,7 +53,8 @@ class IcntConfig(dict):
     def __init__(
         self,
         
-        core_map: IcntCoreMap,
+        icnt_core_id: str=ICNT_CORE_NAME,
+        core_map: IcntCoreMap=IcntCoreMap.from_shape((4, 4)),
         l1_mem_bank_size: int = parse_mem_cap_str("1MB"),
         main_mem_bank_size: int = parse_mem_cap_str("1GB"),
         flit_size: int = parse_mem_cap_str("16B"),
@@ -58,6 +62,7 @@ class IcntConfig(dict):
     ):
         super().__init__()
         
+        self["icnt_core_id"] = icnt_core_id
         self["core_map"] = core_map
         self["l1_mem_bank_size"] = l1_mem_bank_size
         self["main_mem_bank_size"] = main_mem_bank_size
@@ -68,12 +73,14 @@ class IcntContext:
     def __init__(
         self,
         
+        icnt_core_id: str,
         core_map: IcntCoreMap,
         l1_mem_bank_size: int,
         main_mem_bank_size: int,
         flit_size: int,
         control_packet_size: int,
     ):
+        self._icnt_core_id = icnt_core_id
         self._core_map = core_map
         self._l1_mem_bank_size = l1_mem_bank_size
         self._main_mem_bank_size = main_mem_bank_size
@@ -82,15 +89,18 @@ class IcntContext:
         
         self._base_addr_to_coord_mappings:  dict[int, tuple[tuple[int, int], int]] = {}
         self._coord_to_base_addr_mappings:  dict[tuple[int, int], int] = {}
+        
+        self._npu_core_coords: tuple[tuple[int, int]] = core_map.core_coord(IcntCoreType.NPU)
+        self._dma_core_coords: tuple[tuple[int, int]] = core_map.core_coord(IcntCoreType.DMA)
 
         mem_base_addr = 0x00000000
 
-        for coord in self._core_map.core_coord(IcntCoreType.DMA):
+        for coord in self._npu_core_coords:
             self._base_addr_to_coord_mappings[mem_base_addr] = (coord, self._main_mem_bank_size)
             self._coord_to_base_addr_mappings[coord] = mem_base_addr
             mem_base_addr += self._main_mem_bank_size
         
-        for coord in self._core_map.core_coord(IcntCoreType.NPU):
+        for coord in self._dma_core_coords:
             self._base_addr_to_coord_mappings[mem_base_addr] = (coord, self._l1_mem_bank_size)
             self._coord_to_base_addr_mappings[coord] = mem_base_addr
             mem_base_addr += self._l1_mem_bank_size
@@ -130,5 +140,17 @@ class IcntContext:
         return hop_cnt + (data_size // self._flit_size) + 1
     
     @property
+    def icnt_core_id(self) -> str:
+        return self._icnt_core_id
+    
+    @property
     def core_map(self) -> IcntCoreMap:
         return self._core_map
+    
+    @property
+    def npu_core_coords(self) -> tuple[tuple[int, int]]:
+        return self._npu_core_coords
+
+    @property
+    def dma_core_coords(self) -> tuple[tuple[int, int]]:
+        return self._dma_core_coords

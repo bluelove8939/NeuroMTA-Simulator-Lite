@@ -11,7 +11,8 @@ __all__ = [
     "get_global_core_context",
     "get_global_kernel_context",
     "get_global_pid",
-    
+
+    "DataContainer",
     "RPCMessage",
     "Command",
     
@@ -159,6 +160,36 @@ def core_kernel_method(_func: Callable):
     return __core_kernel_method_wrapper
 
 def core_command_method(_func: Callable):
+    def __core_command_method_wrapper(_core: 'Core', *_args, _is_async: bool=False, **_kwargs) -> Command:
+        if get_global_context_mode() in (GlobalContextMode.IDLE, GlobalContextMode.EXECUTE):
+            return _func(_core, *_args, **_kwargs)
+
+        if not isinstance(_core, Core):
+            raise Exception(f"[ERROR] Command method '{_func.__name__}' can only be called on an instance of Core")
+        
+        kernel_context = get_global_kernel_context()
+        
+        if kernel_context is None:
+            raise Exception(f"[ERROR] Cannot register command '{_func.__name__}' to the compiled kernel since it is called outside of a low-level kernel function")
+        elif not isinstance(kernel_context, Kernel):
+            raise Exception(f"[ERROR] Cannot register command '{_func.__name__}' to the compiled kernel since it is called outside of a low-level kernel function. The current kernel context is not an instance of Kernel, but {type(kernel_context).__name__}")
+        
+        cmd = Command(
+            _func.__name__,     # the command ID is the name of the function
+            *_args,             # the arguments of the command
+            **_kwargs           # the keyword arguments of the command
+        )
+        
+        if get_global_context_mode() == GlobalContextMode.COMPILE:
+            kernel_context.add_execution_step(cmd)
+        else:
+            print(f"[WARNING] Command method '{_func.__name__}' is called outside of the compile or idle context. It implies that the command is called inside the command execution context, which is strictly prohibited. This is mainly because of the faulty implementation of the command method.")
+            raise Exception(f"[ERROR] Command method '{_func.__name__}' is called outside of the compile or idle context.")
+        
+        return cmd
+    return __core_command_method_wrapper
+
+def core_async_command_method(_func: Callable):
     def __core_command_method_wrapper(_core: 'Core', *_args, **_kwargs) -> Command:
         if get_global_context_mode() in (GlobalContextMode.IDLE, GlobalContextMode.EXECUTE):
             return _func(_core, *_args, **_kwargs)
@@ -173,11 +204,10 @@ def core_command_method(_func: Callable):
         elif not isinstance(kernel_context, Kernel):
             raise Exception(f"[ERROR] Cannot register command '{_func.__name__}' to the compiled kernel since it is called outside of a low-level kernel function. The current kernel context is not an instance of Kernel, but {type(kernel_context).__name__}")
 
-        cmd = Command(
-            # kernel_context,   # the kernel context in which this command is registered (kernel ID given instead of the Kernel object itself. This is because the Command should be hashable ...)
-            _func.__name__,             # the command ID is the name of the function
-            *_args,                     # the arguments of the command
-            **_kwargs                   # the keyword arguments of the command
+        cmd = AsyncCommand(
+            _func.__name__,     # the command ID is the name of the function
+            *_args,             # the arguments of the command
+            **_kwargs           # the keyword arguments of the command
         )
         
         if get_global_context_mode() == GlobalContextMode.COMPILE:
@@ -217,19 +247,42 @@ def end_parallel_thread():
 # Implementation
 #################################################
 
+class DataContainer:
+    def __init__(self, data: Any=None):
+        self.data = data
+    
+    def copy_from(self, other: 'DataContainer'):
+        if not isinstance(other, DataContainer):
+            raise Exception(f"[ERROR] Cannot copy from non-DataContainer object of type {type(other).__name__}")
+        self.data = other.data
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {
+            "data": self.data
+        }
+        
+    def __setstate__(self, state: dict):
+        self.data = state["data"]
+        
+
 class RPCMessage:
-    def __init__(self, msg_type: int, src_core_id: str, dst_core_id: str, kernel_id: str, cmd_id: str, *args, **kwargs):
+    def __init__(self, msg_type: int, src_core_id: str, dst_core_id: str, kernel_id: str, cmd_id: str):
         self.msg_id = 0                 # message ID is 0 by default
         self.msg_type = msg_type        # 0 for request, 1 for response
         self.src_core_id = src_core_id
         self.dst_core_id = dst_core_id
         self.kernel_id = kernel_id
         self.cmd_id = cmd_id
-        self.args = args
-        self.kwargs = kwargs
+        self.args = []
+        self.kwargs = {}
         
         self.start_time: int = 0
         self.end_time  : int = 0
+        
+    def with_args(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+        return self
     
     def __getstate__(self):
         return {
@@ -256,22 +309,13 @@ class RPCMessage:
         self.kwargs = state["kwargs"]
         self.start_time = state["start_time"]
         self.end_time = state["end_time"]
-
-    def is_msg_match_with_rsp(self, rsp_msg: 'RPCMessage') -> bool:
-        if not isinstance(rsp_msg, RPCMessage):
-            return False
-
-        return (
-            self.msg_type == 1 and  # Ensure it's a response message
-            self.msg_id == rsp_msg.msg_id,
-        )
         
     def copy_args_from_rsp(self, rsp_msg: 'RPCMessage'):
         for arg_idx in range(len(self.args)):
             req_arg = self.args[arg_idx]
             rsp_arg = rsp_msg.args[arg_idx]
 
-            if isinstance(req_arg, Pointer):
+            if isinstance(req_arg, DataContainer):
                 req_arg.copy_from(rsp_arg)  # copy the response arguments to the request arguments
             else:
                 self.args[arg_idx] = rsp_arg
@@ -279,8 +323,8 @@ class RPCMessage:
         for arg_name in self.kwargs.keys():
             req_arg = self.kwargs[arg_name]
             rsp_arg = rsp_msg.kwargs[arg_name]
-            
-            if isinstance(req_arg, Pointer):
+
+            if isinstance(req_arg, DataContainer):
                 req_arg.copy_from(rsp_arg)  # copy the response arguments to the request arguments
             else:
                 self.kwargs[arg_name] = rsp_arg
@@ -292,6 +336,7 @@ class RPCMessage:
     def __str__(self):
         return f"RPCMessage(msg_id={self.msg_id}, src_core_id={self.src_core_id}, dst_core_id={self.dst_core_id}, kernel_id={self.kernel_id}, cmd_id={self.cmd_id})"
 
+
 class Command:
     def __init__(
         self, 
@@ -299,10 +344,10 @@ class Command:
         *args,
         **kwargs
     ):
-        self.cmd_id             = cmd_id
-        self.args               = args
-        self.kwargs             = kwargs
-        
+        self.cmd_id = cmd_id
+        self.args   = args
+        self.kwargs = kwargs
+
         self._cached_cycle: int = None
         self._cached_cycle_slack: int = 0
         
@@ -349,9 +394,6 @@ class Command:
                 return model(*self.args, **self.kwargs)
             
             return None
-    
-    def force_finish(self):
-        self._cached_cycle_slack = self._cached_cycle
         
     def is_finished(self, core: 'Core', kernel: 'Kernel') -> bool:
         remaining_cycles = self.get_remaining_cycles(core, kernel)
@@ -361,6 +403,36 @@ class Command:
 
     def __str__(self):
         return f"Command[cmd_id={self.cmd_id}](args=({', '.join(map(str, self.args))}), kwargs={{{', '.join(f'{k}={v}' for k, v in self.kwargs.items())}}})"
+    
+    
+class AsyncCommand(Command):
+    def __init__(self, cmd_id: str, *args, **kwargs):
+        super().__init__(cmd_id, *args, **kwargs)
+        
+        self._is_async_finished = False
+    
+    def get_remaining_cycles(self, core: 'Core', kernel: 'Kernel') -> int:
+        return None  # Async commands do not have remaining cycles
+
+    def update_cycle_time(self, core: 'Core', kernel: 'Kernel', cycle_time: int):
+        if cycle_time < 0:
+            raise ValueError(f"[ERROR] Cycle time cannot be negative: {cycle_time}")
+
+        self._is_async_finished = self.run_behavioral_model(core, kernel)
+
+        if self.is_finished(core, kernel):
+            core.run_command_debug_hook(kernel=kernel, cmd=self)
+
+    def run_behavioral_model(self, core: 'Core', kernel: 'Kernel'):
+        with new_global_context(GlobalContextMode.EXECUTE, core, kernel):
+            model = core.get_behavioral_model(self.cmd_id)
+            return model(*self.args, **self.kwargs)
+        
+    def run_cycle_model(self, core: 'Core', kernel: 'Kernel') -> int:
+        return None  # Async commands do not have a cycle model
+        
+    def is_finished(self, core: 'Core', kernel: 'Kernel') -> bool:
+        return self._is_async_finished
 
 
 class ThreadGroup(list['Kernel']):
@@ -373,7 +445,16 @@ class ThreadGroup(list['Kernel']):
         return super().append(kernel)
 
     def get_remaining_cycles(self, core: 'Core') -> int:
-        return min(kernel.get_remaining_cycles(core) for kernel in self)
+        remaining_cycles = None
+        for kernel in self:
+            tmp = kernel.get_remaining_cycles(core)
+            if tmp is None:
+                continue
+            elif remaining_cycles is None:
+                remaining_cycles = tmp
+            else:
+                remaining_cycles = min(remaining_cycles, tmp)
+        return remaining_cycles
 
     def update_cycle_time(self, core: 'Core', cycle_time: int):
         for kernel in self:
@@ -498,7 +579,9 @@ class Core:
         self._dispatched_main_kernels:      dict[str, Kernel] = {}
         self._dispatched_rpc_kernels:       dict[str, Kernel] = {}
         self._dispatched_rpc_msg_mappings:  dict[str, RPCMessage] = {}  # RPC kernel -> RPC request message (given from the source core)
-        self._suspended_rpc_req_msg:        list[RPCMessage] = []
+
+        self._suspended_rpc_req_msg: dict[str, RPCMessage] = {}
+        self._suspended_rpc_rsp_msg: dict[str, RPCMessage] = {}
 
         self._rpc_req_recv_queue: mp.Queue = None               # queue to receive RPC request messages
         self._rpc_rsp_recv_queue: mp.Queue = None               # queue to receive RPC response messages
@@ -511,17 +594,15 @@ class Core:
         self._use_functional_model = True
 
         self._timestamp = 0
-        self._suspended_cycle_time = 0    # if '_suspended_cycle_time' is not 0, the timestamp does not increases when calling 'update_cycle_time'
         
     def __getstate__(self):
         mem_handle_states = {}
         for key, handle in self.__dict__.items():
             if isinstance(handle, MemoryHandle):
                 mem_handle_states[key] = handle.__getstate__()
-                
+
         other_states = {
             "_timestamp": self._timestamp,
-            "_suspended_cycle_time": self._suspended_cycle_time,
         }
         
         return {
@@ -534,17 +615,17 @@ class Core:
         other_states: dict[str, Any] = state["other_states"]
         
         for key, handle in mem_handle_states.items():
-            handle = getattr(self, key, None)
+            handle: MemoryHandle = getattr(self, key, None)
             handle.__setstate__(mem_handle_states[key])
 
         self._timestamp = other_states["_timestamp"]
-        self._suspended_cycle_time = other_states["_suspended_cycle_time"]
 
     def initialize_kernel_dispatch_queue(self):
         self._dispatched_main_kernels.clear()
         self._dispatched_rpc_kernels.clear()
         self._dispatched_rpc_msg_mappings.clear()
         self._suspended_rpc_req_msg.clear()
+        self._suspended_rpc_rsp_msg.clear()
         
         return self
     
@@ -586,51 +667,37 @@ class Core:
             
         self._dispatched_rpc_kernels[kernel_name] = kernel
         self._dispatched_rpc_msg_mappings[kernel_name] = msg
-
-    def update_cycle_time(self, cycle_level: bool=True):
-        self._rpc_req_msg_kernel_dispatch_routine()  # dispatch RPC kernel if the RPC request queue is not empty
         
-        if self.is_idle:
-            return
+    def get_remaining_cycles(self) -> int:        
+        remaining_cycles = None
         
-        is_rpc_handle_mode = len(self._dispatched_rpc_kernels) > 0
+        for kernel in self.dispatched_kernels.values():
+            if remaining_cycles is None:
+                remaining_cycles = kernel.get_remaining_cycles(self)
+            else:
+                remaining_cycles = min(remaining_cycles, kernel.get_remaining_cycles(self))
         
-        if is_rpc_handle_mode:
-            dispatched_kernels = self._dispatched_rpc_kernels   # the core is now handling with RPC message
-        else:
-            dispatched_kernels = self._dispatched_main_kernels  # the core is now handling with the main kernels
+        if remaining_cycles is None:
+            return None
+        return remaining_cycles
         
-        if cycle_level:
-            target_cycle_time = 1
-        else:
-            target_cycle_time = math.inf
-            
-            for kernel in dispatched_kernels.values():
-                cycles = kernel.get_remaining_cycles(self)
-                if cycles is not None:
-                    target_cycle_time = min(target_cycle_time, cycles)
-            
-            target_cycle_time = max(1, target_cycle_time)  # ensure at least 1 cycle
+    def update_cycle_time(self, cycle_time: int):
+        self._rpc_req_kernel_dispatch_routine()  # dispatch RPC kernel if the RPC request queue is not empty
+        self._rpc_rsp_msg_receive_routine()      # receive RPC response message and register them as suspended
 
-        self._timestamp += target_cycle_time
-                
-        if self._suspended_cycle_time < target_cycle_time:
-            target_cycle_time -= self._suspended_cycle_time
-            self._suspended_cycle_time = 0  # reset the suspended cycle time if it is less than the target cycle time
-            
-            kernel_names = list(dispatched_kernels.keys())
+        self._timestamp += cycle_time
 
-            for kernel_name in kernel_names:
-                kernel = dispatched_kernels[kernel_name]
-                kernel.update_cycle_time(self, target_cycle_time)
+        kernel_names = list(self.dispatched_kernels.keys())
 
-                if kernel.is_finished(self):
-                    if is_rpc_handle_mode:
-                        self._rpc_rsp_msg_kernel_remove_routine(kernel_name)  # generate RPC response if the current ongoing RPC message is properly handled
-                    else:
-                        del dispatched_kernels[kernel_name] # if the kernel is main kernel, simply remove the kernel from the "dispatched_kernels" dictionary
-        else:
-            self._suspended_cycle_time -= target_cycle_time
+        for kernel_name in kernel_names:
+            kernel = self.dispatched_kernels[kernel_name]
+            kernel.update_cycle_time(self, cycle_time)
+
+            if kernel.is_finished(self):
+                if self.is_rpc_running:
+                    self._rpc_req_kernel_remove_and_rsp_send_routine(kernel_name)  # generate RPC response if the current ongoing RPC message is properly handled
+                else:
+                    del self.dispatched_kernels[kernel_name] # if the kernel is main kernel, simply remove the kernel from the "dispatched_kernels" dictionary
 
     def register_command_debug_hook(self, hook: Callable[[Command], None]) -> str:
         def create_hook_id(i: int) -> str:
@@ -668,51 +735,43 @@ class Core:
         return getattr(self, cmd_id)
     
     @core_command_method
-    def remote_rpc_send_request_msg(self, msg: RPCMessage):
-        msg.start_time = self._timestamp  # set the start time of the message
-        
-        msg_id = f"{self.core_id}.{msg.dst_core_id}.{msg.kernel_id}.{msg.cmd_id}.{self.timestamp}"
-        msg.msg_id = msg_id
-        
-        self._rpc_req_send_inbox[msg.dst_core_id].put(msg)
-        self._suspended_rpc_req_msg.append(msg)
-        
-    @core_command_method
-    def remote_rpc_wait_response_msg(self):
-        # NOTE: RPC wait operation is not a conditional flow control command. Unlike normal commands, the RPC wait command does not take additional cycles when calling.
-        # It's because the RPC wait command is designed to blocking main thread execution until the response message is available. Therefore, this command does not check 
-        # whether the response queue is empty or not, before receiving the actual response message.
-        
-        rsp_msg: RPCMessage = self.rpc_rsp_recv_queue.get()
-        req_msg: RPCMessage = None
-        
-        for i in range(len(self._suspended_rpc_req_msg)):
-            if self._suspended_rpc_req_msg[i].is_msg_match_with_rsp(rsp_msg):
-                req_msg = self._suspended_rpc_req_msg.pop(i)
-                req_msg.copy_args_from_rsp(rsp_msg)
-                break
+    def core_debug_with_ambiguous_func(self, func: Callable, *args, **kwargs):
+        return func(*args, **kwargs)
 
-        if req_msg is None:
-            raise Exception(f"[ERROR] Cannot find the suspended request message matching with the response message: {rsp_msg} but there are {len(self._suspended_rpc_req_msg)} suspended RPC requests. This may caused by the faulty implementation of RPC.")
+    @core_command_method
+    def async_rpc_send_req_msg(self, req_msg: RPCMessage):
+        req_msg.start_time = self._timestamp  # set the start time of the message
         
-        # NOTE: Since the elapsed time given from the response message is evaluated with different time domain (destination core's time domain), we need to compensate
-        # the execution time before resuming the main thread execution context of the current time domain (source core's time domain). If the end time of the request
-        # message is greater than the current timestamp, we need to suspend the main thread timestamp. 
+        msg_id = f"{self.core_id}.{req_msg.dst_core_id}.{req_msg.kernel_id}.{req_msg.cmd_id}.{self.timestamp}"
+        req_msg.msg_id = msg_id
         
+        self._rpc_req_send_inbox[req_msg.dst_core_id].put(req_msg)
+        self._suspended_rpc_req_msg[msg_id] = req_msg
+        
+    @core_async_command_method
+    def async_rpc_wait_rsp_msg(self, req_msg: RPCMessage):
+        msg_id = req_msg.msg_id
+
+        if msg_id not in self._suspended_rpc_rsp_msg:
+            return False
+        
+        rsp_msg = self._suspended_rpc_rsp_msg[msg_id]
+            
+        req_msg.copy_args_from_rsp(rsp_msg)
         req_msg.end_time = req_msg.start_time + rsp_msg.elapsed_time  # set the end time of the request message
-        
-        if req_msg.end_time > self._timestamp:
-            self._suspended_cycle_time = req_msg.end_time - self._timestamp
+            
+        del self._suspended_rpc_rsp_msg[msg_id]  # remove the response message from the suspended RPC response message list
+        del self._suspended_rpc_req_msg[msg_id]  # remove the request message from the suspended RPC request message list
 
         return True
     
     @core_kernel_method
-    def remote_rpc_barrier(self):
+    def async_rpc_barrier(self):
         suspended_rpc_msg_num = len(self._suspended_rpc_req_msg)
-        for _ in range(suspended_rpc_msg_num):
-            self.remote_rpc_wait_response_msg()  # wait for all suspended RPC request messages to be resolved
+        for i in range(suspended_rpc_msg_num):
+            self.async_rpc_wait_rsp_msg(self._suspended_rpc_req_msg[i])  # wait for all suspended RPC request messages to be resolved
 
-    def _rpc_req_msg_kernel_dispatch_routine(self):
+    def _rpc_req_kernel_dispatch_routine(self):
         if self.rpc_req_recv_queue.empty():
             return
 
@@ -742,7 +801,14 @@ class Core:
         
         self.dispatch_rpc_kernel(kernel=kernel, msg=msg)
         
-    def _rpc_rsp_msg_kernel_remove_routine(self, kernel_name: str):
+    def _rpc_rsp_msg_receive_routine(self):
+        if self.rpc_rsp_recv_queue.empty():
+            return
+
+        rsp_msg: RPCMessage = self.rpc_rsp_recv_queue.get()
+        self._suspended_rpc_rsp_msg[rsp_msg.msg_id] = rsp_msg
+        
+    def _rpc_req_kernel_remove_and_rsp_send_routine(self, kernel_name: str):
         kernel = self._dispatched_rpc_kernels[kernel_name]
         msg = self._dispatched_rpc_msg_mappings[kernel_name]
         
@@ -752,6 +818,7 @@ class Core:
             dst_core_id=msg.dst_core_id,
             kernel_id=msg.kernel_id,
             cmd_id=msg.cmd_id,
+        ).with_args(
             *kernel.args,       # the response message gets updated input arguments (pointer consistency)
             **kernel.kwargs,    # the response message gets updated input keyword arguments (pointer consistency)
         )
@@ -763,6 +830,16 @@ class Core:
 
         del self._dispatched_rpc_kernels[kernel_name]       # remove the kernel from the dispatched RPC kernels
         del self._dispatched_rpc_msg_mappings[kernel_name]  # remove the message
+        
+    @property
+    def is_rpc_running(self) -> bool:
+        return len(self._dispatched_rpc_kernels) > 0
+
+    @property
+    def dispatched_kernels(self) -> dict[str, Kernel]:
+        if not self.is_rpc_running:
+            return self._dispatched_main_kernels
+        return self._dispatched_rpc_kernels
 
     @property
     def is_idle(self) -> bool:
@@ -773,14 +850,14 @@ class Core:
         for kernel in self._dispatched_main_kernels.values():
             if not kernel.is_finished(self):
                 return False
-        return True and self._suspended_cycle_time == 0
+        return True
 
     @property
     def is_idle_rpc(self) -> bool:
         for kernel in self._dispatched_rpc_kernels.values():
             if not kernel.is_finished(self):
                 return False
-        return True and self._suspended_cycle_time == 0
+        return True
 
     @property
     def use_cycle_model(self) -> bool:
@@ -804,4 +881,4 @@ class Core:
     
     @property
     def total_timestamp(self) -> int:
-        return self._timestamp + self._suspended_cycle_time
+        return self._timestamp
