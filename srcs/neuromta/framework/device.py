@@ -142,8 +142,12 @@ class SingleCoreProcess(mp.Process):
         # Phase 1: Execution Phase
         while True:
             # STEP 1: Send timestamp update request based on the remaining cycles of the core
-            remaining_cycles = self.core.get_remaining_cycles()
-            
+            try:
+                remaining_cycles = self.core.get_remaining_cycles()
+            except Exception as e:
+                print(f"[ERROR] Failed to get remaining cycles for core {self.core.core_id}: {e}")
+                is_exception_caught = True
+
             if self.core.is_idle_main and not is_main_finished:
                 sig_id = _InternalDeviceCoreSignal.MAIN_IDLE
                 is_main_finished = True
@@ -337,30 +341,33 @@ class Device:
                 )
                 q.put(device_sig)
         
-        for core_id in core_ids:
-            device_sig = _InternalDeviceCoreSignal(
-                sig_id=_InternalDeviceCoreSignal.CORE_SYNC_REQ,
-                core_id=core_id,
-            )
-            device_to_core_sig_q_dict[core_id].put(device_sig)
-            
-        while not all(core_sync_flags.values()):
-            sig: _InternalDeviceCoreSignal = core_to_device_sig_queue.get()
-            
-            if sig == _InternalDeviceCoreSignal.CORE_SYNC_RSP:
-                core_id = sig.core_id
-                payload = sig.payload
-                core = self._cores.get(core_id)
+        if not exception_flag:
+            for core_id in core_ids:
+                device_sig = _InternalDeviceCoreSignal(
+                    sig_id=_InternalDeviceCoreSignal.CORE_SYNC_REQ,
+                    core_id=core_id,
+                )
+                device_to_core_sig_q_dict[core_id].put(device_sig)
                 
-                if core is None:
-                    raise Exception(f"[ERROR] Core with ID '{core_id}' not found.")
+            while not all(core_sync_flags.values()):
+                sig: _InternalDeviceCoreSignal = core_to_device_sig_queue.get()
+                
+                if sig == _InternalDeviceCoreSignal.CORE_SYNC_RSP:
+                    core_id = sig.core_id
+                    payload = sig.payload
+                    core = self._cores.get(core_id)
+                    
+                    if core is None:
+                        raise Exception(f"[ERROR] Core with ID '{core_id}' not found.")
 
-                core.__setstate__(payload)
-                core_sync_flags[core_id] = True
-                
-            else:
-                print(f"[ERROR] Failed to synchronize the core states since the device received invalid signal '{sig}' from the core. (the simulation result may be inconsistent)")
-                break
+                    core.__setstate__(payload)
+                    core_sync_flags[core_id] = True
+                    
+                else:
+                    print(f"[ERROR] Failed to synchronize the core states since the device received invalid signal '{sig}' from the core. (the simulation result may be inconsistent)")
+                    break
+        else:
+            print(f"[ERROR] Skip synchronizing core states since unexpected exception occurred.")
 
         for p in core_process_dict.values():
             if p.is_alive():
