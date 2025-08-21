@@ -33,69 +33,55 @@ if __name__ == "__main__":
     psum_size = psum.numel() * psum.element_size()
     ofm_size = ofm.numel() * ofm.element_size()
     
-    ifm_ptrs  = device.create_local_l1_buffer("ifm",  page_size=ifm_size,  n_pages=1)
-    wgt_ptrs  = device.create_local_l1_buffer("wgt",  page_size=wgt_size,  n_pages=1)
-    psum_ptrs = device.create_local_l1_buffer("psum", page_size=psum_size, n_pages=1)
-    ofm_ptrs  = device.create_local_l1_buffer("ofm",  page_size=ofm_size,  n_pages=1)
-    
-    device.set_ptr_content(ifm_ptrs[0], ifm)
-    device.set_ptr_content(wgt_ptrs[0], wgt)
-    device.set_ptr_content(psum_ptrs[0], psum)
-    device.set_ptr_content(ofm_ptrs[1], ofm)
+    ifm_ptr  = device.create_local_l1_buffer("ifm",  page_size=ifm_size,  n_pages=1, coords=device.npu_core_coords[0])
+    wgt_ptr  = device.create_local_l1_buffer("wgt",  page_size=wgt_size,  n_pages=1, coords=device.npu_core_coords[0])
+    psum_ptr = device.create_local_l1_buffer("psum", page_size=psum_size, n_pages=1, coords=device.npu_core_coords[0])
+    ofm_ptr  = device.create_local_l1_buffer("ofm",  page_size=ofm_size,  n_pages=1, coords=device.npu_core_coords[0])
+
+    device.set_ptr_content(ifm_ptr, ifm)
+    device.set_ptr_content(wgt_ptr, wgt)
+    device.set_ptr_content(psum_ptr, psum)
+    device.set_ptr_content(ofm_ptr, ofm)
 
     @core_kernel_method
     def gemm_kernel(
-        core: NPUCore, 
+        core: NPUCore,    
         
-        src_ifm_ptr: Pointer, 
-        src_wgt_ptr: Pointer, 
-        src_psum_ptr: Pointer,     
-        
-        tmp_ifm_ptr: Pointer,
-        tmp_wgt_ptr: Pointer,
-        tmp_psum_ptr: Pointer,
-        tmp_ofm_ptr: Pointer
+        ifm_ptr: Pointer,
+        wgt_ptr: Pointer,
+        psum_ptr: Pointer,
+        ofm_ptr: Pointer
     ):  
-        core.async_noc_buffer_read(tmp_ifm_ptr, 0, src_ifm_ptr, 0, 1)
-        core.async_noc_buffer_read(tmp_wgt_ptr, 0, src_wgt_ptr, 0, 1)
-        core.async_noc_buffer_read(tmp_psum_ptr, 0, src_psum_ptr, 0, 1)
-        core.async_rpc_barrier()
-
         core.mxu_reconfigure(dtype=torch.int32, acc_dtype=torch.int32)
         core.mxu_tiled_gemm(
-            ifm_ptr=tmp_ifm_ptr,
-            wgt_ptr=tmp_wgt_ptr,
-            psum_ptr=tmp_psum_ptr,
-            ofm_ptr=tmp_ofm_ptr,
+            ifm_ptr=ifm_ptr,
+            wgt_ptr=wgt_ptr,
+            psum_ptr=psum_ptr,
+            ofm_ptr=ofm_ptr,
             preload_wgt=False,
             preload_psum=True,
             flush_ofm=True
         )
         
         core.vpu_reconfigure(vlen=32, vdtype=dtype)
-        core.vpu_load_reg(tmp_ifm_ptr, 0, 0, 4)
-        core.vpu_load_reg(tmp_wgt_ptr, 0, 4, 4)
+        core.vpu_load_reg(ifm_ptr, 0, 0, 4)
+        core.vpu_load_reg(wgt_ptr, 0, 4, 4)
         core.vpu_execute(VPUOperator.ADD, 0, 4, 8, inplace=False, burst_len=4)
-        core.vpu_store_reg(tmp_ofm_ptr, 0, 8, 4)
+        core.vpu_store_reg(ofm_ptr, 0, 8, 4)
         
     gemm_kernel(
-        device.npu_cores[1],
-        
-        src_ifm_ptr=ifm_ptrs[0],
-        src_wgt_ptr=wgt_ptrs[0],
-        src_psum_ptr=psum_ptrs[0],
-        
-        tmp_ifm_ptr=ifm_ptrs[1],
-        tmp_wgt_ptr=wgt_ptrs[1],
-        tmp_psum_ptr=psum_ptrs[1],
-        tmp_ofm_ptr=ofm_ptrs[1]
+        device.npu_cores[0],
+        ifm_ptr=ifm_ptr,
+        wgt_ptr=wgt_ptr,
+        psum_ptr=psum_ptr,
+        ofm_ptr=ofm_ptr
     )
 
     device.run_kernels(verbose=True, max_steps=-1, save_trace=True, save_trace_dir=TRACE_DIR)
     
     reference = torch.matmul(ifm, wgt) + psum
     reference[0:4, :] = ifm[0:4, :] + wgt[0:4, :]  # Simulate the effect of the VPU operation
-    simulated = device.get_ptr_content(ofm_ptrs[1], shape=(M, N), dtype=acc_dtype)
+    simulated = device.get_ptr_content(ofm_ptr, shape=(M, N), dtype=acc_dtype)
 
     print(f"\n=== REFERENCE ===\n{reference}")
     print(f"\n=== SIMULATED ===\n{simulated}")

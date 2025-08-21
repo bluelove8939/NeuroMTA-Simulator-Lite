@@ -28,20 +28,19 @@ if __name__ == "__main__":
     device.initialize()
     device.change_sim_model_options(use_cycle_model=True, use_functional_model=True)
     
-    page_size = 256
+    page_size = 32
     n_pages = 4
-    dtype = torch.int8
+    dtype = torch.int32
     
     npu_core = device.npu_cores[0]
     
-    main_in_ptr     = device.create_sharded_main_memory_buffer("main_buffer", page_size, n_pages, coords=[device.dma_core_coords[0],])
-    main_out_ptr    = device.create_sharded_main_memory_buffer("main_buffer", page_size, n_pages, coords=[device.dma_core_coords[0],])
-    l1_ptr          = device.create_l1_buffer_to_cores("l1_buffer", page_size, 1, coords=[npu_core.coord,])
-
+    main_in_ptr     = device.create_sharded_main_buffer("main_buffer", page_size, n_pages, coords=[device.dma_core_coords[0],])
+    main_out_ptr    = device.create_sharded_main_buffer("main_buffer", page_size, n_pages, coords=[device.dma_core_coords[0],])
+    l1_ptr          = device.create_local_l1_buffer("l1_buffer", page_size, 1, coords=[npu_core.coord,])
 
     for i in range(n_pages):
         content = torch.zeros(page_size // dtype.itemsize, dtype=dtype).fill_(i+1)
-        device.dma_cores[0].mem_handle.set_content(main_in_ptr[i], content)
+        device.set_ptr_content(main_in_ptr[i], content)
     
     kernel_main(npu_core, main_in_ptr, l1_ptr, main_out_ptr, n_pages=n_pages)
     
@@ -51,6 +50,5 @@ if __name__ == "__main__":
     
     print(f"kernel simulation time: {(ed - st)*1000:.2f}ms")
     print(f"simulation terminated with {device.timestamp}")
-    print("simulation ouput")
-    print(device.dma_cores[0].mem_handle.get_content(main_in_ptr[0], shape=(-1, page_size // dtype.itemsize), dtype=dtype))
-    print(device.dma_cores[0].mem_handle.get_content(main_out_ptr[0], shape=(-1, page_size // dtype.itemsize), dtype=dtype))
+    print(f"\n=== INPUT  BUFFER ===\n{device.get_ptr_content(main_in_ptr[0], shape=(-1,), dtype=dtype)}")
+    print(f"\n=== OUTPUT BUFFER ===\n{device.get_ptr_content(main_out_ptr[0], shape=(-1,), dtype=dtype)}")
