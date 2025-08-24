@@ -1,5 +1,5 @@
 import enum
-import math
+import itertools
 import multiprocessing as mp
 from typing import Callable, Sequence, Any
 
@@ -23,6 +23,7 @@ __all__ = [
     
     "core_kernel_method",
     "core_command_method",
+    "core_conditional_command_method",
     "new_parallel_thread",
     "start_parallel_thread",
     "end_parallel_thread",
@@ -143,7 +144,8 @@ def core_kernel_method(_func: Callable):
         )
         
         if get_global_context_mode() == GlobalContextMode.IDLE:
-            _core.dispatch_main_kernel(kernel)
+            # _core.dispatch_main_kernel(kernel)
+            pass  # do not automatically dispatch kernel
         elif get_global_context_mode() == GlobalContextMode.COMPILE:
             kernel_context = get_global_kernel_context()
             
@@ -160,7 +162,7 @@ def core_kernel_method(_func: Callable):
     return __core_kernel_method_wrapper
 
 def core_command_method(_func: Callable):
-    def __core_command_method_wrapper(_core: 'Core', *_args, _is_async: bool=False, **_kwargs) -> Command:
+    def __core_command_method_wrapper(_core: 'Core', *_args, **_kwargs) -> Command:
         if get_global_context_mode() in (GlobalContextMode.IDLE, GlobalContextMode.EXECUTE):
             return _func(_core, *_args, **_kwargs)
 
@@ -189,7 +191,7 @@ def core_command_method(_func: Callable):
         return cmd
     return __core_command_method_wrapper
 
-def core_async_command_method(_func: Callable):
+def core_conditional_command_method(_func: Callable):
     def __core_command_method_wrapper(_core: 'Core', *_args, **_kwargs) -> Command:
         if get_global_context_mode() in (GlobalContextMode.IDLE, GlobalContextMode.EXECUTE):
             return _func(_core, *_args, **_kwargs)
@@ -204,7 +206,7 @@ def core_async_command_method(_func: Callable):
         elif not isinstance(kernel_context, Kernel):
             raise Exception(f"[ERROR] Cannot register command '{_func.__name__}' to the compiled kernel since it is called outside of a low-level kernel function. The current kernel context is not an instance of Kernel, but {type(kernel_context).__name__}")
 
-        cmd = AsyncCommand(
+        cmd = ConditionalCommand(
             _func.__name__,     # the command ID is the name of the function
             *_args,             # the arguments of the command
             **_kwargs           # the keyword arguments of the command
@@ -405,7 +407,7 @@ class Command:
         return f"Command[cmd_id={self.cmd_id}](args=({', '.join(map(str, self.args))}), kwargs={{{', '.join(f'{k}={v}' for k, v in self.kwargs.items())}}})"
     
     
-class AsyncCommand(Command):
+class ConditionalCommand(Command):
     def __init__(self, cmd_id: str, *args, **kwargs):
         super().__init__(cmd_id, *args, **kwargs)
         
@@ -641,18 +643,15 @@ class Core:
         self._use_cycle_model = use_cycle_model if use_cycle_model is not None else self._use_cycle_model
         self._use_functional_model = use_functional_model if use_functional_model is not None else self._use_functional_model
 
-    def dispatch_main_kernel(self, kernel: Kernel):
+    def dispatch_main_kernel(self, slot_id: Any, kernel: Kernel):
         if not isinstance(kernel, Kernel):
             raise Exception(f"[ERROR] Cannot dispatch kernel '{kernel}' to the core since it is not an instance of CompiledKernel")
         
-        kernel_name = kernel.kernel_id
-        i = 0
-        
-        while kernel_name in self._dispatched_main_kernels.keys():
-            kernel_name = f"{kernel.kernel_id}_{i}"
-            i += 1
-
-        self._dispatched_main_kernels[kernel_name] = kernel
+        if slot_id in self._dispatched_main_kernels:
+            prev_kernel = self._dispatched_main_kernels[slot_id]
+            prev_kernel.add_execution_step(kernel)  
+        else:
+            self._dispatched_main_kernels[slot_id] = kernel
 
     def dispatch_rpc_kernel(self, kernel: Kernel, msg: RPCMessage):
         if not isinstance(kernel, Kernel):
@@ -671,11 +670,13 @@ class Core:
     def get_remaining_cycles(self) -> int:        
         remaining_cycles = None
         
-        for kernel in self.dispatched_kernels.values():
+        for kernel in itertools.chain(self._dispatched_main_kernels.values(), self._dispatched_rpc_kernels.values()):
+            kernel_remaining_cycles = kernel.get_remaining_cycles(self)
+            
             if remaining_cycles is None:
-                remaining_cycles = kernel.get_remaining_cycles(self)
-            else:
-                remaining_cycles = min(remaining_cycles, kernel.get_remaining_cycles(self))
+                remaining_cycles = kernel_remaining_cycles
+            elif kernel_remaining_cycles is not None:
+                remaining_cycles = min(remaining_cycles, kernel_remaining_cycles)
         
         if remaining_cycles is None:
             return None
@@ -687,17 +688,22 @@ class Core:
 
         self._timestamp += cycle_time
 
-        kernel_names = list(self.dispatched_kernels.keys())
+        main_kernel_names = list(self._dispatched_main_kernels.keys())
+        rpc_kernel_names = list(self._dispatched_rpc_kernels.keys())
 
-        for kernel_name in kernel_names:
-            kernel = self.dispatched_kernels[kernel_name]
+        for kernel_name in main_kernel_names:
+            kernel = self._dispatched_main_kernels[kernel_name]
             kernel.update_cycle_time(self, cycle_time)
 
             if kernel.is_finished(self):
-                if self.is_rpc_running:
-                    self._rpc_req_kernel_remove_and_rsp_send_routine(kernel_name)  # generate RPC response if the current ongoing RPC message is properly handled
-                else:
-                    del self.dispatched_kernels[kernel_name] # if the kernel is main kernel, simply remove the kernel from the "dispatched_kernels" dictionary
+                del self._dispatched_main_kernels[kernel_name] # if the kernel is main kernel, simply remove the kernel from the "dispatched_kernels" dictionary
+
+        for kernel_name in rpc_kernel_names:
+            kernel = self._dispatched_rpc_kernels[kernel_name]
+            kernel.update_cycle_time(self, cycle_time)
+
+            if kernel.is_finished(self):
+                self._rpc_req_kernel_remove_and_rsp_send_routine(kernel_name)  # generate RPC response if the current ongoing RPC message is properly handled
 
     def register_command_debug_hook(self, hook: Callable[[Command], None]) -> str:
         def create_hook_id(i: int) -> str:
@@ -735,8 +741,16 @@ class Core:
         return getattr(self, cmd_id)
     
     @core_command_method
-    def core_debug_with_ambiguous_func(self, func: Callable, *args, **kwargs):
+    def debug_core_with_ambiguous_func(self, func: Callable, *args, **kwargs):
         return func(*args, **kwargs)
+    
+    @core_conditional_command_method
+    def parallel_merge(self):
+        # NOTE: This command is a dummy command for merging parallel threads. Since the core executes the command in order, this command will be executed
+        # after all the parallel threads are successfully executed. This command does not actually merges all the preceding parallel threads. However, this
+        # command will automatically be dispatched as a new step for the current kernel context, preventing other subsequent steps from being executed until 
+        # this command is finished.
+        return True  # dummy: always conditional true!
 
     @core_command_method
     def async_rpc_send_req_msg(self, req_msg: RPCMessage):
@@ -748,7 +762,7 @@ class Core:
         self._rpc_req_send_inbox[req_msg.dst_core_id].put(req_msg)
         self._suspended_rpc_req_msg[msg_id] = req_msg
         
-    @core_async_command_method
+    @core_conditional_command_method
     def async_rpc_wait_rsp_msg(self, req_msg: RPCMessage):
         msg_id = req_msg.msg_id
 
@@ -830,16 +844,6 @@ class Core:
 
         del self._dispatched_rpc_kernels[kernel_name]       # remove the kernel from the dispatched RPC kernels
         del self._dispatched_rpc_msg_mappings[kernel_name]  # remove the message
-        
-    @property
-    def is_rpc_running(self) -> bool:
-        return len(self._dispatched_rpc_kernels) > 0
-
-    @property
-    def dispatched_kernels(self) -> dict[str, Kernel]:
-        if not self.is_rpc_running:
-            return self._dispatched_main_kernels
-        return self._dispatched_rpc_kernels
 
     @property
     def is_idle(self) -> bool:

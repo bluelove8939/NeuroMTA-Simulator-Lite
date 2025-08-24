@@ -46,12 +46,10 @@ class NPUCore(Core):
         
     @core_command_method
     def sem_set_value(self, ptr: Pointer, value: int):
-        # ptr.content = value
         self.mem_handle.set_content(ptr, value)
 
     @core_command_method
     def sem_increase(self, ptr: Pointer, value: int=1):
-        # ptr.content += value
         sem: Variable = self.mem_handle.get_data_element(ptr)
         sem.content += value
 
@@ -60,7 +58,7 @@ class NPUCore(Core):
         sem: Variable = self.mem_handle.get_data_element(ptr)
         sem.content -= value
 
-    @core_command_method
+    @core_conditional_command_method
     def sem_wait(self, ptr: Pointer, value: int=0):
         sem: Variable = self.mem_handle.get_data_element(ptr)
         return sem.content == value
@@ -69,23 +67,28 @@ class NPUCore(Core):
     # Circular Buffer Management (Intra-Core Control Management)
     #############################################################
 
-    @core_command_method
-    def cb_reserve_back(self, ptr: CircularBufferPointer, n_pages: int):
-        if not ptr.check_vacancy(n_pages):
+    @core_conditional_command_method
+    def cb_reserve_back(self, ref: Reference, n_pages: int):
+        handle: CircularBufferHandle = ref.handle
+        if not handle.check_vacancy(n_pages):
             return False
-        ptr.allocate_cb_space(n_pages)
+        handle.allocate_cb_space(n_pages)
+        return True
         
     @core_command_method
-    def cb_push_back(self, ptr: CircularBufferPointer, n_pages: int):
-        ptr.occupy_cb_space(n_pages)
+    def cb_push_back(self, ref: Reference, n_pages: int):
+        handle: CircularBufferHandle = ref.handle
+        handle.occupy_cb_space(n_pages)
         
-    @core_command_method
-    def cb_wait_front(self, ptr: CircularBufferPointer, n_pages: int):
-        return ptr.check_occupancy(n_pages)
+    @core_conditional_command_method
+    def cb_wait_front(self, ref: Reference, n_pages: int):
+        handle: CircularBufferHandle = ref.handle
+        return handle.check_occupancy(n_pages)
     
     @core_command_method
-    def cb_pop_front(self, ptr: CircularBufferPointer, n_pages: int):
-        ptr.deallocate_cb_space(n_pages)
+    def cb_pop_front(self, ref: Reference, n_pages: int):
+        handle: CircularBufferHandle = ref.handle
+        handle.deallocate_cb_space(n_pages)
         
     #############################################################
     # Buffer Management
@@ -108,17 +111,11 @@ class NPUCore(Core):
         dst_elem.copy_from(src_elem)
 
     @core_kernel_method
-    def local_memcopy_buffer(self, dst_ptr: BufferPointer, dst_offset_page_idx: int, src_ptr: BufferPointer, src_offset_page_idx: int, n_pages: int):        
-        dst_st = dst_offset_page_idx
-        dst_ed = dst_st + n_pages
-        
-        src_st = src_offset_page_idx
-        src_ed = src_st + n_pages
-        
-        dst_ptrs = dst_ptr[dst_st:dst_ed]
-        src_ptrs = src_ptr[src_st:src_ed]
+    def local_memcopy_buffer(self, dst_ref: Reference, src_ref: Reference):  
+        dst_handle = dst_ref.resolve(is_read=False)
+        src_handle = src_ref.resolve(is_read=True)
 
-        for dst_ptr, src_ptr in zip(dst_ptrs, src_ptrs):
+        for dst_ptr, src_ptr in zip(dst_handle.page_ptrs, src_handle.page_ptrs):
             self.local_memcopy_page(dst_ptr, src_ptr)
             
     #############################################################
@@ -252,32 +249,20 @@ class NPUCore(Core):
             self.async_rpc_wait_rsp_msg(writer_msg)
             
     @core_kernel_method
-    def async_noc_buffer_read(self, dst_ptr: BufferPointer, dst_offset_page_idx: int, src_ptr: BufferPointer, src_offset_page_idx: int, n_pages: int):
-        dst_st = dst_offset_page_idx
-        dst_ed = dst_st + n_pages
-        
-        src_st = src_offset_page_idx
-        src_ed = src_st + n_pages
-        
-        dst_ptrs = dst_ptr[dst_st:dst_ed]
-        src_ptrs = src_ptr[src_st:src_ed]
+    def async_noc_buffer_read(self, dst_ref: Reference, src_ref: Reference):
+        dst_handle = dst_ref.resolve(is_read=False)
+        src_handle = src_ref.resolve(is_read=True)  
 
-        for dst_ptr, src_ptr in zip(dst_ptrs, src_ptrs):
+        for dst_ptr, src_ptr in zip(dst_handle.page_ptrs, src_handle.page_ptrs):
             with new_parallel_thread():
                 self.async_noc_page_read(dst_ptr, src_ptr)
-                
-    @core_kernel_method
-    def async_noc_buffer_write(self, dst_ptr: BufferPointer, dst_offset_page_idx: int, src_ptr: BufferPointer, src_offset_page_idx: int, n_pages: int):
-        dst_st = dst_offset_page_idx
-        dst_ed = dst_st + n_pages
-        
-        src_st = src_offset_page_idx
-        src_ed = src_st + n_pages
-        
-        dst_ptrs = dst_ptr[dst_st:dst_ed]
-        src_ptrs = src_ptr[src_st:src_ed]
 
-        for dst_ptr, src_ptr in zip(dst_ptrs, src_ptrs):
+    @core_kernel_method
+    def async_noc_buffer_write(self, dst_ref: Reference, src_ref: Reference):
+        dst_handle = dst_ref.resolve(is_read=False)
+        src_handle = src_ref.resolve(is_read=True)  
+
+        for dst_ptr, src_ptr in zip(dst_handle.page_ptrs, src_handle.page_ptrs):
             with new_parallel_thread():
                 self.async_noc_page_write(dst_ptr, src_ptr)
 
@@ -292,17 +277,17 @@ class NPUCore(Core):
     @core_command_method
     def mxu_tiled_gemm(
         self, 
-        ifm_ptr:  Pointer,
-        wgt_ptr:  Pointer,
-        psum_ptr: Pointer,
-        ofm_ptr:  Pointer,
+        ifm_ptr:  Reference,
+        wgt_ptr:  Reference,
+        psum_ptr: Reference,
+        ofm_ptr:  Reference,
         preload_wgt:   bool,
         preload_psum:  bool,
         flush_ofm:     bool,
     ):  
         if not self.use_functional_model:
             return  # Terminate the command to reduce the simulation time without actual MXU functional unit (do not return anything to make sure that the command is executed only once)
-        
+
         if preload_psum:
             if self.mxu_context.dataflow == MXUDataflow.OS:
                 psum_tile = self.mem_handle.get_content(psum_ptr, shape=self.mxu_context.ofm_tile_shape, dtype=self.mxu_context.acc_dtype)
@@ -318,15 +303,12 @@ class NPUCore(Core):
                 self.mxu_context.load_tile_pe_arr(wgt_tile)
 
         if self.mxu_context.dataflow == MXUDataflow.OS:
-            # ifm_tile = ifm_ptr.content_view(shape=self.mxu_context.ifm_tile_shape, dtype=self.mxu_context.dtype)
-            # wgt_tile = wgt_ptr.content_view(shape=self.mxu_context.wgt_tile_shape, dtype=self.mxu_context.dtype)
             ifm_tile = self.mem_handle.get_content(ifm_ptr, shape=self.mxu_context.ifm_tile_shape, dtype=self.mxu_context.dtype)
             wgt_tile = self.mem_handle.get_content(wgt_ptr, shape=self.mxu_context.wgt_tile_shape, dtype=self.mxu_context.dtype)
 
             self.mxu_context.execute_gemm(ifm_tile=ifm_tile, wgt_tile=wgt_tile)
+
         elif self.mxu_context.dataflow == MXUDataflow.WS:
-            # ifm_tile = ifm_ptr.content_view(shape=self.mxu_context.ifm_tile_shape, dtype=self.mxu_context.dtype)
-            # psum_tile = psum_ptr.content_view(shape=self.mxu_context.ofm_tile_shape, dtype=self.mxu_context.acc_dtype)
             ifm_tile = self.mem_handle.get_content(ifm_ptr, shape=self.mxu_context.ifm_tile_shape, dtype=self.mxu_context.dtype)
             psum_tile = self.mem_handle.get_content(psum_ptr, shape=self.mxu_context.ofm_tile_shape, dtype=self.mxu_context.acc_dtype)
 
@@ -338,11 +320,8 @@ class NPUCore(Core):
             elif self.mxu_context.dataflow == MXUDataflow.WS:
                 psum_tile = self.mxu_context.get_acc_regs() 
             
-            # ofm_page: PageHandle | BufferHandle = ofm_ptr.handle
-            # ofm_page.set_content(psum_tile)
-            # ofm_ptr.content = psum_tile
             self.mem_handle.set_content(ofm_ptr, psum_tile)
-            
+
     #############################################################
     # VPU Commands
     #############################################################
@@ -404,10 +383,10 @@ class NPUCoreCycleModel(CoreCycleModel):
 
     def mxu_tiled_gemm(
         self, 
-        ifm_ptr:  Pointer,
-        wgt_ptr:  Pointer,
-        psum_ptr: Pointer,
-        ofm_ptr:  Pointer,
+        ifm_ptr:  Reference,
+        wgt_ptr:  Reference,
+        psum_ptr: Reference,
+        ofm_ptr:  Reference,
         preload_wgt:   bool,
         preload_psum:  bool,
         flush_ofm:     bool,

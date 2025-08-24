@@ -33,10 +33,10 @@ if __name__ == "__main__":
     psum_size = psum.numel() * psum.element_size()
     ofm_size = ofm.numel() * ofm.element_size()
     
-    ifm_ptr  = device.create_local_l1_buffer("ifm",  page_size=ifm_size,  n_pages=1, coords=device.npu_core_coords[0])
-    wgt_ptr  = device.create_local_l1_buffer("wgt",  page_size=wgt_size,  n_pages=1, coords=device.npu_core_coords[0])
-    psum_ptr = device.create_local_l1_buffer("psum", page_size=psum_size, n_pages=1, coords=device.npu_core_coords[0])
-    ofm_ptr  = device.create_local_l1_buffer("ofm",  page_size=ofm_size,  n_pages=1, coords=device.npu_core_coords[0])
+    ifm_ptr  = device.create_local_l1_buffer(page_size=ifm_size,  n_pages=1, coords=device.npu_core_coords[0])
+    wgt_ptr  = device.create_local_l1_buffer(page_size=wgt_size,  n_pages=1, coords=device.npu_core_coords[0])
+    psum_ptr = device.create_local_l1_buffer(page_size=psum_size, n_pages=1, coords=device.npu_core_coords[0])
+    ofm_ptr  = device.create_local_l1_buffer(page_size=ofm_size,  n_pages=1, coords=device.npu_core_coords[0])
 
     device.set_ptr_content(ifm_ptr, ifm)
     device.set_ptr_content(wgt_ptr, wgt)
@@ -47,10 +47,10 @@ if __name__ == "__main__":
     def gemm_kernel(
         core: NPUCore,    
         
-        ifm_ptr: Pointer,
-        wgt_ptr: Pointer,
-        psum_ptr: Pointer,
-        ofm_ptr: Pointer
+        ifm_ptr:  Reference,
+        wgt_ptr:  Reference,
+        psum_ptr: Reference,
+        ofm_ptr:  Reference
     ):  
         core.mxu_reconfigure(dtype=torch.int32, acc_dtype=torch.int32)
         core.mxu_tiled_gemm(
@@ -69,13 +69,14 @@ if __name__ == "__main__":
         core.vpu_execute(VPUOperator.ADD, 0, 4, 8, inplace=False, burst_len=4)
         core.vpu_store_reg(ofm_ptr, 0, 8, 4)
         
-    gemm_kernel(
+    kernel = gemm_kernel(
         device.npu_cores[0],
         ifm_ptr=ifm_ptr,
         wgt_ptr=wgt_ptr,
         psum_ptr=psum_ptr,
         ofm_ptr=ofm_ptr
     )
+    device.npu_cores[0].dispatch_main_kernel("compute", kernel=kernel)
 
     device.run_kernels(verbose=True, max_steps=-1, save_trace=True, save_trace_dir=TRACE_DIR)
     

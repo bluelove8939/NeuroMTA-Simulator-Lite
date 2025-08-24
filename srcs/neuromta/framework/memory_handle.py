@@ -9,14 +9,15 @@ __all__ = [
     "Page",
     "PointerType",
     "Pointer",
-    "BufferPointer",
-    "CircularBufferPointer",
+    "Reference",
+    "BufferHandle",
+    "CircularBufferHandle",
     "MemoryHandle",
     
     "create_var_ptr",
     "create_page_ptr",
-    "create_buffer_ptr",
-    "create_sharded_buffer_ptr",
+    "create_buffer_ref",
+    "create_sharded_buffer_ref",
 ]
 
 
@@ -128,7 +129,7 @@ class PointerType(enum.Enum):
         return cls.UNDEFINED
     
 class Pointer:
-    def __init__(self, mem_handle: 'MemoryHandle', data_element: _DataElement):
+    def __init__(self, data_element: _DataElement):
         self._addr = data_element.addr
         self._size = data_element.size
         self._ptr_type = PointerType.get_pointer_type_with_handle(data_element)
@@ -157,16 +158,86 @@ class Pointer:
     def ptr_type(self) -> PointerType:
         return self._ptr_type
     
+    
+class Reference:
+    def __init__(self, handle: 'BufferHandle', item: int | slice | tuple[int, ...] | None=None):
+        self._handle = handle
+        self._item = item
+        
     @property
-    def is_accessable(self) -> bool:
-        return self.mem_handle is not None
-    
-    
-class BufferPointer:
+    def handle(self) -> 'BufferHandle':
+        return self._handle
+
+    def __getstate__(self):
+        return {
+            "handle": self._handle,
+            "item": self._item,
+        }
+        
+    def __setstate__(self, state: dict):
+        self._handle = state["handle"]
+        self._item = state["item"]
+        
+    def __getitem__(self, new_item) -> 'Reference':
+        if isinstance(new_item, (int, slice, tuple)):
+            if self._item is None:
+                return Reference(handle=self._handle, item=new_item)
+            elif isinstance(self._item, int):
+                if new_item != 0:
+                    raise Exception(f"[ERROR] Cannot slice a Reference that points to a single page.")
+                return Reference(handle=self._handle, item=self._item)
+            elif isinstance(self._item, slice):
+                if isinstance(new_item, int):
+                    return Reference(handle=self._handle, item=self._item.start + new_item)
+                elif isinstance(new_item, slice):
+                    start = self._item.start + (new_item.start or 0)
+                    stop = self._item.start + (new_item.stop or (self._handle.n_pages - self._item.start))
+                    return Reference(handle=self._handle, item=slice(start, stop, new_item.step))
+                elif isinstance(new_item, tuple):
+                    return Reference(handle=self._handle, item=tuple(self._item.start + i for i in new_item))
+            elif isinstance(self._item, tuple):
+                if isinstance(new_item, int):
+                    return Reference(handle=self._handle, item=self._item[new_item])
+                elif isinstance(new_item, slice):
+                    return Reference(handle=self._handle, item=self._item[new_item])
+                elif isinstance(new_item, tuple):
+                    return Reference(handle=self._handle, item=tuple(self._item[i] for i in new_item))
+        return super().__getitem__(new_item)
+
+    def resolve(self, is_read: bool=None) -> 'BufferHandle':
+        if isinstance(self._handle, CircularBufferHandle):
+            if is_read is None:
+                raise ValueError(f"[ERROR] Cannot resolve the reference since is_read is not specified for CircularBufferHandle.")
+            elif is_read:
+                offset = self._handle._rd_ptr
+            else:
+                offset = self._handle._wr_ptr
+        else:
+            offset = 0
+        
+        page_ptrs = self._handle.page_ptrs
+        
+        if isinstance(self._item, int):
+            idx  = (self._item + offset) % self._handle.n_pages
+            page_ptrs = [page_ptrs[idx]]
+        elif isinstance(self._item, slice):
+            start = (self._item.start + offset) % self._handle.n_pages
+            stop = (self._item.stop + offset) % self._handle.n_pages
+            page_ptrs = page_ptrs[start:stop]
+        elif isinstance(self._item, tuple):
+            page_ptrs = [page_ptrs[(i + offset) % self._handle.n_pages] for i in self._item]
+        
+        return BufferHandle(page_size=self._handle.page_size, n_pages=len(page_ptrs), page_ptrs=page_ptrs)
+
+
+class BufferHandle:
     def __init__(self, page_size: int, n_pages: int, page_ptrs: list[Pointer]):
         self._page_size: int = page_size
         self._n_pages: int = n_pages
         self._page_ptrs: list[Pointer] = page_ptrs
+        
+        if isinstance(self._page_ptrs, Pointer):
+            self._page_ptrs = [self._page_ptrs]
         
         for ptr in self._page_ptrs:
             if not isinstance(ptr, Pointer):
@@ -177,13 +248,9 @@ class BufferPointer:
         if len(self._page_ptrs) != n_pages:
             raise ValueError(f"[ERROR] Expected {n_pages} pages, but got {len(self._page_ptrs)}.")
         
-    def __getitem__(self, item) -> Pointer | list[Pointer]:
-        if isinstance(item, int):
-            return self._page_ptrs[item]
-        elif isinstance(item, slice):
-            return self._page_ptrs[item]
-        elif isinstance(item, tuple):
-            return [self._page_ptrs[i] for i in item]
+    def __getitem__(self, item) -> Reference:
+        if isinstance(item, (int, slice, tuple)):
+            return Reference(handle=self, item=item)
         return super().__getitem__(item)
 
     def __getstate__(self):
@@ -211,7 +278,7 @@ class BufferPointer:
         return self._page_ptrs
     
     
-class CircularBufferPointer(BufferPointer):
+class CircularBufferHandle(BufferHandle):
     def __init__(self, page_size: int, n_pages: int, page_ptrs: list[Pointer]):
         super().__init__(page_size, n_pages, page_ptrs)
         
@@ -219,12 +286,9 @@ class CircularBufferPointer(BufferPointer):
         self._wr_ptr    = 0
         self._rsvd_ptr  = 0
     
-    def __getitem__(self, item) -> Pointer:
-        if isinstance(item, int):
-            idx = (self._rd_ptr + item) % self.n_pages
-            return self._page_ptrs[idx]
-        raise Exception(f"[ERROR] Slicing is not supported for CircularBufferPointer. Use integer indexing instead.")
-    
+    def __getitem__(self, item) -> BufferHandle:
+        raise Exception(f"[ERROR] Cannot create reference for CircularBufferPointer with slicing. Use specialized reference methods 'rd_ref' or 'wr_ref' instead.")
+
     def __getstate__(self):
         return super().__getstate__() | {
             "rd_ptr": self._rd_ptr,
@@ -238,7 +302,7 @@ class CircularBufferPointer(BufferPointer):
         self._rsvd_ptr = state["rsvd_ptr"]
         
         return super().__setstate__(state)
-    
+
     @property
     def _alloc_space(self) -> int:
         if self._rsvd_ptr >= self._rd_ptr:
@@ -306,11 +370,14 @@ class MemoryHandle:
             raise TypeError(f"[ERROR] Key must be an int or Pointer, got {type(key)}.")
         
     def get_content(self, key: Any, shape: tuple[int, ...]=None, dtype: torch.dtype=None) -> Any:
+        if isinstance(key, Reference):
+            key = key.resolve(is_read=True)
+
         if isinstance(key, int):
             content = self.get_data_element(key).content
         elif isinstance(key, Pointer):
             content = self.get_data_element(key).content
-        elif isinstance(key, BufferPointer):
+        elif isinstance(key, BufferHandle):
             page_contents = []
             for page_ptr in key.page_ptrs:
                 page: Page = self.get_data_element(page_ptr)
@@ -327,12 +394,15 @@ class MemoryHandle:
         return content
     
     def set_content(self, key: Any, value: Any, offset: int=0):
+        if isinstance(key, Reference):
+            key = key.resolve(is_read=False)
+        
         if isinstance(key, int):
             self.get_data_element(key).content = value
         elif isinstance(key, Pointer):
             page: Page = self.get_data_element(key)
             page.set_content(value=value, offset=0)
-        elif isinstance(key, BufferPointer):
+        elif isinstance(key, BufferHandle):
             if not isinstance(value, torch.Tensor):
                 raise TypeError(f"[ERROR] Buffer content must be a torch.Tensor, got {type(value)}.")
             
@@ -370,7 +440,7 @@ class MemoryHandle:
             if overlap < 0:
                 var = Variable(addr=addr, size=var_size, content=initial_value)
                 self._data_elements[addr] = var
-                return Pointer(mem_handle=self, data_element=var)
+                return Pointer(data_element=var)
             else:
                 continue
         return None
@@ -383,12 +453,12 @@ class MemoryHandle:
             if overlap < 0:
                 page = Page(addr=addr, size=page_size)
                 self._data_elements[addr] = page
-                return Pointer(mem_handle=self, data_element=page)
+                return Pointer(data_element=page)
             else:
                 continue
         return None
 
-    def allocate_buffer_ptr(self, page_size: int, n_pages: int, is_circular: bool) -> CircularBufferPointer | BufferPointer | None:
+    def allocate_buffer_ptr(self, page_size: int, n_pages: int, is_circular: bool) -> CircularBufferHandle | BufferHandle | None:
         page_ptrs = []
 
         for i in range(n_pages):
@@ -399,11 +469,11 @@ class MemoryHandle:
             page_ptrs.append(page_ptr)
 
         if is_circular:
-            return CircularBufferPointer(page_size=page_size, n_pages=n_pages, page_ptrs=page_ptrs)
+            return CircularBufferHandle(page_size=page_size, n_pages=n_pages, page_ptrs=page_ptrs)
         else:
-            return BufferPointer(page_size=page_size, n_pages=n_pages, page_ptrs=page_ptrs)
+            return BufferHandle(page_size=page_size, n_pages=n_pages, page_ptrs=page_ptrs)
 
-    def deallocate_ptr(self, *ptrs: Pointer | BufferPointer):
+    def deallocate_ptr(self, *ptrs: Pointer | BufferHandle):
         for ptr in ptrs:
             if isinstance(ptr, Pointer):
                 addr = ptr.addr
@@ -411,7 +481,7 @@ class MemoryHandle:
                     del self._data_elements[addr]
                 else:
                     raise KeyError(f"[ERROR] No data element found at address {addr} in memory handle with base address {self._base_addr}.")
-            elif isinstance(ptr, BufferPointer):
+            elif isinstance(ptr, BufferHandle):
                 for page_ptr in ptr.page_ptrs:
                     self.deallocate_ptr(page_ptr)
             else:
@@ -442,10 +512,13 @@ def create_var_ptr(mem_handle: MemoryHandle, var_size: int, initial_value: Any) 
 def create_page_ptr(mem_handle: MemoryHandle, page_size: int) -> Pointer | None:
     return mem_handle.allocate_page_ptr(page_size)
 
-def create_buffer_ptr(mem_handle: MemoryHandle, page_size: int, n_pages: int, is_circular: bool) -> CircularBufferPointer | BufferPointer | None:
-    return mem_handle.allocate_buffer_ptr(page_size, n_pages, is_circular=is_circular)
+def create_buffer_ref(mem_handle: MemoryHandle, page_size: int, n_pages: int, is_circular: bool) -> Reference | None:
+    bf_handle = mem_handle.allocate_buffer_ptr(page_size, n_pages, is_circular=is_circular)
+    if bf_handle is None:
+        return None
+    return Reference(handle=bf_handle, item=None)
 
-def create_sharded_buffer_ptr(mem_handles: list[MemoryHandle], page_size: int, n_pages: int) -> BufferPointer | None:
+def create_sharded_buffer_ref(mem_handles: list[MemoryHandle], page_size: int, n_pages: int) -> Reference | None:
     n_page_per_handle = math.ceil(n_pages / len(mem_handles))
     page_ptrs = []
     
@@ -458,4 +531,7 @@ def create_sharded_buffer_ptr(mem_handles: list[MemoryHandle], page_size: int, n
                 return None
             page_ptrs.append(page_ptr)
             
-    return BufferPointer(page_size=page_size, n_pages=n_pages, page_ptrs=page_ptrs)
+    bf_handle = BufferHandle(page_size=page_size, n_pages=n_pages, page_ptrs=page_ptrs)
+    if bf_handle is None:
+        return None
+    return Reference(handle=bf_handle, item=None)

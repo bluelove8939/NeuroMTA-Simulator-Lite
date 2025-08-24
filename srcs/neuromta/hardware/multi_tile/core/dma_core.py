@@ -49,7 +49,7 @@ class DMACore(Core):
         dst_elem.copy_from(src_elem)
         
     @core_kernel_method
-    def main_memcopy_buffer(self, dst_ptr: BufferPointer, dst_offset_page_idx: int, src_ptr: BufferPointer, src_offset_page_idx: int, n_pages: int):
+    def main_memcopy_buffer(self, dst_ptr: BufferHandle, dst_offset_page_idx: int, src_ptr: BufferHandle, src_offset_page_idx: int, n_pages: int):
         dst_st = dst_offset_page_idx
         dst_ed = dst_st + n_pages
         

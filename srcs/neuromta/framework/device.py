@@ -146,6 +146,8 @@ class SingleCoreProcess(mp.Process):
                 remaining_cycles = self.core.get_remaining_cycles()
             except Exception as e:
                 print(f"[ERROR] Failed to get remaining cycles for core {self.core.core_id}: {e}")
+                print(traceback.format_exc())
+                remaining_cycles = None
                 is_exception_caught = True
 
             if self.core.is_idle_main and not is_main_finished:

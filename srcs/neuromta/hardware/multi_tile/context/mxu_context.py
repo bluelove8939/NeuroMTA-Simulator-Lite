@@ -127,7 +127,7 @@ class MXUContext:
             if wgt_tile.shape != self.wgt_tile_shape:
                 raise Exception(f"[ERROR] WGT tile shape {wgt_tile.shape} does not match expected shape {self.wgt_tile_shape}.")
             
-            self._pe_arr_regs[:, :] = (ifm_tile @ wgt_tile) + self._pe_arr_regs
+            self._pe_arr_regs = (ifm_tile @ wgt_tile) + self._pe_arr_regs
         elif self._dataflow == MXUDataflow.WS:
             if wgt_tile is not None:
                 raise Exception("[ERROR] WGT tile should not be provided for WS dataflow.")
@@ -141,13 +141,13 @@ class MXUContext:
             raise Exception(f"[ERROR] Unsupported MXU dataflow: {self._dataflow}.")
         
     def flush_pe_arr(self):
-        self._pe_arr_regs[:, :] = 0
-        
+        self._pe_arr_regs = torch.zeros((self.pe_arr_height, self.pe_arr_width), dtype=self._acc_dtype)
+
     def flush_acc_regs(self) -> torch.Tensor:
         if self._acc_regs is None:
             raise Exception("[ERROR] Accumulator registers are not available in this dataflow.")
-        
-        self._acc_regs[:, :] = 0
+
+        self._acc_regs = torch.zeros((self.seq_len, self.pe_arr_width), dtype=self._acc_dtype)
         
     @property
     def acc_dtype(self) -> torch.dtype:

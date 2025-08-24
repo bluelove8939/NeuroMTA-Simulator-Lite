@@ -69,69 +69,72 @@ class MTAccelerator(Device):
         coord = self.icnt_context.get_coord_from_address(addr)
         return self.get_mem_handle_from_coord(coord)
 
-    def create_local_l1_circular_buffer(self, cb_id: str, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> BufferPointer | list[BufferPointer]:
+    def create_local_l1_circular_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference | list[Reference]:
         if coords is None:
             coords = self.npu_core_coords
         if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
             coords = [coords]
             
-        ptrs: list[Pointer] = []
+        ptrs: list[BufferHandle] = []
 
         for coord in coords:
             core = self.get_core_from_coord(coord)
-            ptr = create_buffer_ptr(mem_handle=core.mem_handle, page_size=page_size, n_pages=n_pages, is_circular=True)
+            ptr = create_buffer_ref(mem_handle=core.mem_handle, page_size=page_size, n_pages=n_pages, is_circular=True)
             ptrs.append(ptr)
 
         if len(coords) == 1:
             return ptrs[0]
         return ptrs
     
-    def create_local_l1_buffer(self, bf_id: str, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> BufferPointer | list[BufferPointer]:
+    def create_local_l1_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference | list[Reference]:
         if coords is None:
             coords = self.npu_core_coords
         if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
             coords = [coords]
             
-        ptrs: list[Pointer] = []
+        ptrs: list[BufferHandle] = []
 
         for coord in coords:
             core = self.get_core_from_coord(coord)
-            ptr = create_buffer_ptr(mem_handle=core.mem_handle, page_size=page_size, n_pages=n_pages, is_circular=False)
+            ptr = create_buffer_ref(mem_handle=core.mem_handle, page_size=page_size, n_pages=n_pages, is_circular=False)
             ptrs.append(ptr)
         
         if len(coords) == 1:
             return ptrs[0]
         return ptrs
 
-    def create_sharded_l1_buffer(self, bf_id: str, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> BufferPointer:
+    def create_sharded_l1_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference:
         if coords is None:
             coords = self.icnt_context.core_map.core_coord(IcntCoreType.NPU)
         if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
             coords = [coords]
 
         mem_handles = [self.get_mem_handle_from_coord(coord) for coord in coords]
-        ptr = create_sharded_buffer_ptr(mem_handles=mem_handles, page_size=page_size, n_pages=n_pages)
+        ptr = create_sharded_buffer_ref(mem_handles=mem_handles, page_size=page_size, n_pages=n_pages)
 
         return ptr
 
-    def create_sharded_main_buffer(self, bf_id: str, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> BufferPointer:
+    def create_sharded_main_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference:
         if coords is None:
             coords = self.icnt_context.core_map.core_coord(IcntCoreType.DMA)
         if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
             coords = [coords]
         
         mem_handles = [self.get_mem_handle_from_coord(coord) for coord in coords]
-        ptr = create_sharded_buffer_ptr(mem_handles=mem_handles, page_size=page_size, n_pages=n_pages)
+        ptr = create_sharded_buffer_ref(mem_handles=mem_handles, page_size=page_size, n_pages=n_pages)
 
         return ptr
     
-    def set_ptr_content(self, ptr: BufferPointer | Pointer, content: torch.Tensor):
+    def set_ptr_content(self, ptr: Reference | Pointer | BufferHandle, content: torch.Tensor):
+        if isinstance(ptr, Reference):
+            ptr = ptr.resolve(is_read=False)
+        
         if isinstance(ptr, Pointer):
             if ptr.ptr_type == PointerType.PAGE:
                 self._set_page_var_ptr_content(ptr, content)
             else:
                 self._set_page_var_ptr_content(ptr, content)
-        elif isinstance(ptr, BufferPointer):
+        elif isinstance(ptr, BufferHandle):
             page_size = ptr.page_size
             n_pages = ptr.n_pages
             
@@ -155,13 +158,16 @@ class MTAccelerator(Device):
         mem_handle = self.get_mem_handle_from_addr(ptr.addr)
         mem_handle.set_content(ptr, content)
 
-    def get_ptr_content(self, ptr: BufferPointer | Pointer, shape: tuple[int, ...]=None, dtype: torch.dtype=None) -> torch.Tensor:
+    def get_ptr_content(self, ptr: Reference | Pointer | BufferHandle, shape: tuple[int, ...]=None, dtype: torch.dtype=None) -> torch.Tensor:
+        if isinstance(ptr, Reference):
+            ptr = ptr.resolve(is_read=True)
+            
         if isinstance(ptr, Pointer):
             if ptr.ptr_type == PointerType.PAGE:
                 return self._get_page_var_ptr_content(ptr, shape, dtype)
             else:
                 return self._get_page_var_ptr_content(ptr)
-        elif isinstance(ptr, BufferPointer):
+        elif isinstance(ptr, BufferHandle):
             page_size = ptr.page_size
             n_pages = ptr.n_pages
             

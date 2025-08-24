@@ -12,3 +12,17 @@ conda activate neuromta
 pip install -r requirements.txt
 pip install -e .
 ```
+
+## Deep Dive into NeuroMTA
+
+### NeuroMTA Framework
+
+NeuroMTA simulator provides a comprehensive framework `neuromta/framework` to implement behavioral and cycle-level model of the deep learning accelerator. The framework includes several metaclasses to create cores, memory space, and device instances. You can create your own cores and hardware components by defining command-level interface of them.
+
+### NeuroMTA Hardware (under-development)
+
+NeuroMTA simulator provides `neuromta/hardware`, which contains the actual implementation of predetermined hardware architectures including multi-tile accelerator. You can check details of each hardware architecture including MXU (Matrix Multiplication Unit) and DMA (Direct Memory Access) engines.
+
+### NeuroMTA IP (under-development)
+
+NeuroMTA simulator provides `neuromta/ip`, which contains the presets of the commercial NPU architectures. This subproject also provides software stack of the accelerator including runtime library and compiler.

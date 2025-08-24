@@ -12,12 +12,12 @@ TRACE_DIR = os.path.join(os.path.dirname(__file__), ".logs", FILENAME)
 
 
 @core_kernel_method
-def kernel_main(core: NPUCore, main_in_ptr: Pointer, l1_ptr: Pointer, main_out_ptr: Pointer, n_pages: int):
+def kernel_main(core: NPUCore, main_in_ptr: Reference, l1_ptr: Reference, main_out_ptr: Reference, n_pages: int):
     for i in range(n_pages):
-        core.async_noc_page_read(l1_ptr[0], main_in_ptr[i])
+        core.async_noc_buffer_read(l1_ptr[0], main_in_ptr[i])
         core.async_rpc_barrier()
          
-        core.async_noc_page_write(main_out_ptr[i], l1_ptr[0])
+        core.async_noc_buffer_write(main_out_ptr[i], l1_ptr[0])
         core.async_rpc_barrier()
 
 
@@ -34,15 +34,16 @@ if __name__ == "__main__":
     
     npu_core = device.npu_cores[0]
     
-    main_in_ptr     = device.create_sharded_main_buffer("main_buffer", page_size, n_pages, coords=[device.dma_core_coords[0],])
-    main_out_ptr    = device.create_sharded_main_buffer("main_buffer", page_size, n_pages, coords=[device.dma_core_coords[0],])
-    l1_ptr          = device.create_local_l1_buffer("l1_buffer", page_size, 1, coords=[npu_core.coord,])
+    main_in_ptr     = device.create_sharded_main_buffer(page_size, n_pages, coords=[device.dma_core_coords[0],])
+    main_out_ptr    = device.create_sharded_main_buffer(page_size, n_pages, coords=[device.dma_core_coords[0],])
+    l1_ptr          = device.create_local_l1_buffer(page_size, 1, coords=[npu_core.coord,])
 
     for i in range(n_pages):
         content = torch.zeros(page_size // dtype.itemsize, dtype=dtype).fill_(i+1)
         device.set_ptr_content(main_in_ptr[i], content)
     
-    kernel_main(npu_core, main_in_ptr, l1_ptr, main_out_ptr, n_pages=n_pages)
+    kernel = kernel_main(npu_core, main_in_ptr, l1_ptr, main_out_ptr, n_pages=n_pages)
+    npu_core.dispatch_main_kernel("compute", kernel=kernel)
     
     st = time.time()
     device.run_kernels(verbose=True, max_steps=-1, save_trace=True, save_trace_dir=TRACE_DIR)

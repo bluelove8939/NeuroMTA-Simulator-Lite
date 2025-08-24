@@ -7,4 +7,4 @@ from neuromta.hardware.multi_tile.core.npu_core import *
 from neuromta.hardware.multi_tile.core.dma_core import *
 from neuromta.hardware.multi_tile.core.icnt_core import *
 
-from neuromta.hardware.multi_tile.multi_tile_accelerator import *
+from neuromta.hardware.multi_tile.accelerator import *
