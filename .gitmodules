@@ -1,0 +1,6 @@
+[submodule "srcs/externals/booksim2"]
+	path = srcs/externals/booksim2
+	url = https://github.com/bluelove8939/NeuroMTA-booksim2.git
+[submodule "srcs/externals/dramsim3"]
+	path = srcs/externals/dramsim3
+	url = https://github.com/bluelove8939/NeuroMTA-DRAMsim3.git
