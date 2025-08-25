@@ -1,2 +1,0 @@
-add_subdirectory(dramsim3)
-add_subdirectory(booksim2)
