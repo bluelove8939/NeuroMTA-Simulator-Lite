@@ -3,6 +3,7 @@ from neuromta.framework import *
 from neuromta.hardware.multi_tile.context.mem_context import MemContext
 from neuromta.hardware.multi_tile.context.icnt_context import IcntContext
 
+from neuromta.hardware.companions.dramsim import PYDRAMSIM3_AVAILABLE, DRAMSim3
 
 __all__ = [
     "DMACore",
@@ -31,43 +32,43 @@ class DMACore(Core):
             size=self.icnt_context._main_mem_bank_size
         )
         
-    #############################################################
-    # Buffer Management
-    #############################################################
+        if self.mem_context.main_config.dramsim3_enable and not PYDRAMSIM3_AVAILABLE:
+            raise RuntimeError("[ERROR] DRAMSim3 is not available. Please install PyDRAMSim3 to enable DRAMSim3 support.")
         
-    @core_command_method
-    def main_memcopy_page(self, dst_ptr: Pointer, src_ptr: Pointer):
-        if dst_ptr.ptr_type != PointerType.PAGE or src_ptr.ptr_type != PointerType.PAGE:
-            raise ValueError("[ERROR] Memory copy requires page pointers.")
+        if self.is_dramsim3_enabled:
+            dramsim3_module = DRAMSim3(config_name=self.mem_context.main_config.dramsim3_config_name)
+            self.register_companion_module("DRAMSIM3", dramsim3_module)
 
-        if dst_ptr.size != src_ptr.size:
-            raise ValueError(f"[ERROR] Page sizes do not match: {dst_ptr.size} != {src_ptr.size}")
-
-        dst_elem: Page = self.mem_handle.get_data_element(dst_ptr)
-        src_elem: Page = self.mem_handle.get_data_element(src_ptr)
-
-        dst_elem.copy_from(src_elem)
-        
-    @core_kernel_method
-    def main_memcopy_buffer(self, dst_ptr: BufferHandle, dst_offset_page_idx: int, src_ptr: BufferHandle, src_offset_page_idx: int, n_pages: int):
-        dst_st = dst_offset_page_idx
-        dst_ed = dst_st + n_pages
-        
-        src_st = src_offset_page_idx
-        src_ed = src_st + n_pages
-        
-        dst_ptrs = dst_ptr[dst_st:dst_ed]
-        src_ptrs = src_ptr[src_st:src_ed]
-
-        for dst_ptr, src_ptr in zip(dst_ptrs, src_ptrs):
-            self.main_memcopy_page(dst_ptr, src_ptr)
+    @property
+    def is_dramsim3_enabled(self) -> bool:
+        return PYDRAMSIM3_AVAILABLE and self.mem_context.main_config.dramsim3_enable
             
     #############################################################
     # Data Container (NoC Interface)
     #############################################################
     
-    @core_command_method
+    @core_kernel_method
     def mem_load_page_from_container(self, ptr: Pointer, container: DataContainer):
+        if self.is_dramsim3_enabled:
+            module = self.get_companion_module("DRAMSIM3")
+            cmd = module.create_cmd(addr=ptr.addr, size=ptr.size, is_write=True)
+            self.companion_send_cmd("DRAMSIM3", cmd)
+            self.companion_wait_cmd_executed("DRAMSIM3", cmd)
+
+        self._static_mem_load_page_from_container(ptr, container)
+        
+    @core_kernel_method
+    def mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
+        if self.is_dramsim3_enabled:
+            module = self.get_companion_module("DRAMSIM3")
+            cmd = module.create_cmd(addr=ptr.addr, size=ptr.size, is_write=False)
+            self.companion_send_cmd("DRAMSIM3", cmd)
+            self.companion_wait_cmd_executed("DRAMSIM3", cmd)
+            
+        self._static_mem_store_page_to_container(ptr, container)
+
+    @core_command_method
+    def _static_mem_load_page_from_container(self, ptr: Pointer, container: DataContainer):
         if ptr.ptr_type != PointerType.PAGE:
             raise ValueError("[ERROR] Memory copy requires page pointer.")
 
@@ -78,7 +79,7 @@ class DMACore(Core):
         page_elem.content = container.data
 
     @core_command_method
-    def mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
+    def _static_mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
         if ptr.ptr_type != PointerType.PAGE:
             raise ValueError("[ERROR] Memory copy requires page pointer.")
 
@@ -93,14 +94,13 @@ class DMACoreCycleModel(CoreCycleModel):
         super().__init__()
         
         self.core = core
-
-    def main_memcopy_page(self, dst_ptr: Pointer, src_ptr: Pointer):
-        return self.core.mem_context.main_config.get_cycles(size=src_ptr.size)
     
-    @core_command_method
-    def mem_load_page_from_container(self, ptr: Pointer, container: DataContainer):
-        return self.core.mem_context.l1_config.get_cycles(size=ptr.size)
+    def _static_mem_load_page_from_container(self, ptr: Pointer, container: DataContainer):
+        if self.core.is_dramsim3_enabled:
+            return 1    # if DRAMSim is enabled, simulation time will be reflected at the behavioral model
+        return self.core.mem_context.main_config.get_cycles(size=ptr.size)
 
-    @core_command_method
-    def mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
-        return self.core.mem_context.l1_config.get_cycles(size=ptr.size)
+    def _static_mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
+        if self.core.is_dramsim3_enabled:
+            return 1    # if DRAMSim is enabled, simulation time will be reflected at the behavioral model
+        return self.core.mem_context.main_config.get_cycles(size=ptr.size)

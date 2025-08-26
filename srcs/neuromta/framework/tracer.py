@@ -58,7 +58,7 @@ class Tracer:
 
     def core_debug_hook(self, core: Core, kernel: Kernel, cmd: Command):
         entry = TraceEntry(
-            timestamp=core.total_timestamp,
+            timestamp=core.timestamp,
             core_id=self.convert_valid_core_id(core.core_id),
             kernel_id=kernel.kernel_id,
             cmd_id=cmd.cmd_id,

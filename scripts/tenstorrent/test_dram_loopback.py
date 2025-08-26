@@ -49,7 +49,7 @@ if __name__ == "__main__":
     device.run_kernels(verbose=True, max_steps=-1, save_trace=True, save_trace_dir=TRACE_DIR)
     ed = time.time()
     
-    print(f"kernel simulation time: {(ed - st)*1000:.2f}ms")
+    print(f"\nkernel simulation time: {(ed - st)*1000:.2f}ms")
     print(f"simulation terminated with {device.timestamp}")
     print(f"\n=== INPUT  BUFFER ===\n{device.get_ptr_content(main_in_ptr[0], shape=(-1,), dtype=dtype)}")
     print(f"\n=== OUTPUT BUFFER ===\n{device.get_ptr_content(main_out_ptr[0], shape=(-1,), dtype=dtype)}")

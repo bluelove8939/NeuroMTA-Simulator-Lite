@@ -1,4 +1,5 @@
 import os
+import time
 import torch
 
 from neuromta.framework import *
@@ -196,7 +197,12 @@ if __name__ == "__main__":
             core.dispatch_main_kernel("compute", kernel=kernel2)
             core.dispatch_main_kernel("write", kernel=kernel3)
 
+    st = time.time()
     device.run_kernels(verbose=True, max_steps=-1, save_trace=True, save_trace_dir=TRACE_DIR)
+    ed = time.time()
+    
+    print(f"\nkernel simulation time: {(ed - st)*1000:.2f}ms")
+    print(f"simulation terminated with {device.timestamp}")
     
     reference = torch.matmul(ifm, wgt) + psum
     simulated = device.get_ptr_content(bf_ofm_ptr, shape=(m_tile_num, n_tile_num, m_tile, n_tile), dtype=acc_dtype).permute(0, 2, 1, 3).reshape(M, N)

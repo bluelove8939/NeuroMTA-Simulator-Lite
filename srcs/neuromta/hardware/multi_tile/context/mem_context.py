@@ -20,6 +20,10 @@ class MainMemoryConfig:
         burst_len: int              = 256, 
         is_ddr: bool                = True, 
         processor_clock_freq: int   = parse_freq_str("1GHz"),
+        
+        # DRAMSim3 Configuation (if needed)
+        dramsim3_config_name: str   = "GDDR5_8Gb_x32",
+        dramsim3_enable: bool       = False,
     ):
         self.transfer_speed         = transfer_speed    # transfer speed per pin (MT/s)
         self.ch_io_width            = ch_io_width       # io channel width (bits)
@@ -27,7 +31,10 @@ class MainMemoryConfig:
         self.burst_len              = burst_len         # burst length
         self.is_ddr                 = is_ddr
         self.processor_clock_freq   = processor_clock_freq
-        
+
+        self.dramsim3_config_name   = dramsim3_config_name
+        self.dramsim3_enable        = dramsim3_enable
+
     def get_cycles(self, size: int) -> int:
         self.transfer_speed_bytes = (self.transfer_speed * (2 ** 20) * self.ch_io_width * self.ch_num // 8)  # Byte/s
         self.transfer_speed_per_cycles = self.transfer_speed_bytes / self.processor_clock_freq   # Byte/cycle

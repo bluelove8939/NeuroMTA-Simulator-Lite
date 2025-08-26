@@ -1,3 +1,4 @@
+import abc
 import enum
 import itertools
 import multiprocessing as mp
@@ -17,7 +18,9 @@ __all__ = [
     "Command",
     
     "Kernel",
-    
+
+    "CompanionModule",
+
     "CoreCycleModel",
     "Core",
     
@@ -566,6 +569,24 @@ class Kernel:
         if not self.is_compiled:
             self.compile(core)
         return self._execution_cursor >= len(self._execution_steps)
+    
+    
+class CompanionModule(metaclass=abc.ABCMeta):
+    @abc.abstractmethod
+    def update_cycle_time(self, cycle_time: int):
+        pass
+    
+    @abc.abstractmethod
+    def create_cmd(self, *args, **kwargs) -> Any:
+        pass
+
+    @abc.abstractmethod
+    def dispatch_cmd(self, cmd: Any):
+        pass
+
+    @abc.abstractmethod
+    def check_cmd_executed(self, cmd: Any) -> bool:
+        pass
 
 
 class CoreCycleModel:
@@ -577,6 +598,7 @@ class Core:
         self.core_id = core_id
 
         self._cycle_model: CoreCycleModel = cycle_model
+        self._companion_modules: dict[str, CompanionModule] = {}
 
         self._dispatched_main_kernels:      dict[str, Kernel] = {}
         self._dispatched_rpc_kernels:       dict[str, Kernel] = {}
@@ -596,7 +618,11 @@ class Core:
         self._use_functional_model = True
 
         self._timestamp = 0
-        
+
+    ###########################################################################
+    # Methods for Pickling Core Instance
+    ###########################################################################
+    
     def __getstate__(self):
         mem_handle_states = {}
         for key, handle in self.__dict__.items():
@@ -622,6 +648,10 @@ class Core:
 
         self._timestamp = other_states["_timestamp"]
 
+    ###########################################################################
+    # Initialization
+    ###########################################################################
+    
     def initialize_kernel_dispatch_queue(self):
         self._dispatched_main_kernels.clear()
         self._dispatched_rpc_kernels.clear()
@@ -643,6 +673,10 @@ class Core:
         self._use_cycle_model = use_cycle_model if use_cycle_model is not None else self._use_cycle_model
         self._use_functional_model = use_functional_model if use_functional_model is not None else self._use_functional_model
 
+    ###########################################################################
+    # Kernel Dispatch / Execute / Update Timestamp
+    ###########################################################################
+    
     def dispatch_main_kernel(self, slot_id: Any, kernel: Kernel):
         if not isinstance(kernel, Kernel):
             raise Exception(f"[ERROR] Cannot dispatch kernel '{kernel}' to the core since it is not an instance of CompiledKernel")
@@ -705,6 +739,13 @@ class Core:
             if kernel.is_finished(self):
                 self._rpc_req_kernel_remove_and_rsp_send_routine(kernel_name)  # generate RPC response if the current ongoing RPC message is properly handled
 
+        for cmod_id, cmod in self._companion_modules.items():
+            cmod.update_cycle_time(cycle_time=cycle_time)
+    
+    ###########################################################################
+    # Debugging Methods
+    ###########################################################################
+    
     def register_command_debug_hook(self, hook: Callable[[Command], None]) -> str:
         def create_hook_id(i: int) -> str:
             return f"hook_{i}"
@@ -732,6 +773,14 @@ class Core:
             except Exception as e:
                 print(f"[ERROR] Command debug hook '{hook_id}' failed with error: {e}")
                 
+    @core_command_method
+    def debug_core_with_ambiguous_func(self, func: Callable, *args, **kwargs):
+        return func(*args, **kwargs)
+    
+    ###########################################################################
+    # Cycle / Behavioral Model
+    ###########################################################################
+      
     def get_cycle_model(self, cmd_id: str) -> Callable:
         return getattr(self._cycle_model, cmd_id) if (self._use_cycle_model and hasattr(self._cycle_model, cmd_id)) else 1
 
@@ -740,9 +789,9 @@ class Core:
             raise Exception(f"[ERROR] Command '{cmd_id}' is not registered in the core '{self.core_id}'")
         return getattr(self, cmd_id)
     
-    @core_command_method
-    def debug_core_with_ambiguous_func(self, func: Callable, *args, **kwargs):
-        return func(*args, **kwargs)
+    ###########################################################################
+    # Parallelization
+    ###########################################################################
     
     @core_conditional_command_method
     def parallel_merge(self):
@@ -752,6 +801,10 @@ class Core:
         # this command is finished.
         return True  # dummy: always conditional true!
 
+    ###########################################################################
+    # Asynchronous RPC Methods (Inter-Core Communication)
+    ###########################################################################
+    
     @core_command_method
     def async_rpc_send_req_msg(self, req_msg: RPCMessage):
         req_msg.start_time = self._timestamp  # set the start time of the message
@@ -845,6 +898,34 @@ class Core:
         del self._dispatched_rpc_kernels[kernel_name]       # remove the kernel from the dispatched RPC kernels
         del self._dispatched_rpc_msg_mappings[kernel_name]  # remove the message
 
+    ###########################################################################
+    # Companion Module (Cycle-Level External Simulator Integration)
+    ###########################################################################
+    
+    def register_companion_module(self, module_id: str, module: CompanionModule):
+        self._companion_modules[module_id] = module
+        
+    def get_companion_module(self, module_id: str) -> CompanionModule:
+        return self._companion_modules.get(module_id, None)
+    
+    @core_command_method
+    def companion_send_cmd(self, module_id: str, cmd: Any):
+        cmod = self.get_companion_module(module_id)
+        if cmod is None:
+            raise Exception(f"[ERROR] Cannot send command to the unknown companion module '{module_id}'")
+        cmod.dispatch_cmd(cmd)
+        
+    @core_conditional_command_method
+    def companion_wait_cmd_executed(self, module_id: str, cmd: Any):
+        cmod = self.get_companion_module(module_id)
+        if cmod is None:
+            raise Exception(f"[ERROR] Cannot wait for command execution from the unknown companion module '{module_id}'")
+        return cmod.check_cmd_executed(cmd)
+
+    ###########################################################################
+    # Properties
+    ###########################################################################
+    
     @property
     def is_idle(self) -> bool:
         return self.is_idle_main and self.is_idle_rpc
@@ -881,8 +962,4 @@ class Core:
 
     @property
     def timestamp(self) -> int:
-        return self._timestamp
-    
-    @property
-    def total_timestamp(self) -> int:
         return self._timestamp

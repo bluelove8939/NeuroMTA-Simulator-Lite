@@ -1,4 +1,5 @@
 import os
+import time
 import torch
 
 from neuromta.framework import *
@@ -78,7 +79,12 @@ if __name__ == "__main__":
     )
     device.npu_cores[0].dispatch_main_kernel("compute", kernel=kernel)
 
+    st = time.time()
     device.run_kernels(verbose=True, max_steps=-1, save_trace=True, save_trace_dir=TRACE_DIR)
+    ed = time.time()
+    
+    print(f"\nkernel simulation time: {(ed - st)*1000:.2f}ms")
+    print(f"simulation terminated with {device.timestamp}")
     
     reference = torch.matmul(ifm, wgt) + psum
     reference[0:4, :] = ifm[0:4, :] + wgt[0:4, :]  # Simulate the effect of the VPU operation

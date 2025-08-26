@@ -260,7 +260,7 @@ class Device:
     
     def default_command_debug_hook(self, core: Core, kernel: Kernel, cmd: Command):
         if self._verbose:
-            sys.stdout.write(f"[DEBUG] #{core.total_timestamp:<5d} | core: {core.core_id.__str__():<12s} | kernel: {kernel.kernel_id:<36s} | command: {cmd.cmd_id:<34s}\n")
+            sys.stdout.write(f"[DEBUG] #{core.timestamp:<5d} | core: {core.core_id.__str__():<12s} | kernel: {kernel.kernel_id:<36s} | command: {cmd.cmd_id:<34s}\n")
             
     def run_kernels(self, verbose: bool=False, max_steps: int=-1, save_trace: bool=False, save_trace_dir: str=DEFAULT_TRACE_DIR):
         if not self.is_initialized:

@@ -52,6 +52,9 @@ class TenstorrentConfig(dict):
             burst_len=256,            # bytes (typical burst length)
             is_ddr=True,
             processor_clock_freq=parse_freq_str("1.35GHz"),
+            
+            dramsim3_config_name="GDDR5_8Gb_x32",
+            dramsim3_enable=True,
         )
         
         mem_config = MemConfig(
@@ -115,6 +118,9 @@ class TenstorrentConfig(dict):
             burst_len=256,            # bytes (typical burst length)
             is_ddr=True,
             processor_clock_freq=parse_freq_str("1GHz"),
+            
+            dramsim3_config_name="GDDR5_8Gb_x32",
+            dramsim3_enable=True,
         )
         
         mem_config = MemConfig(
@@ -176,6 +182,9 @@ class TenstorrentConfig(dict):
             burst_len=256,            # bytes (typical burst length)
             is_ddr=True,
             processor_clock_freq=parse_freq_str("500MHz"),
+            
+            dramsim3_config_name="GDDR5_8Gb_x32",
+            dramsim3_enable=True,
         )
         
         mem_config = MemConfig(
