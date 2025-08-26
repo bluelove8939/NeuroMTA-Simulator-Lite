@@ -1,3 +1,6 @@
 [submodule "externals/dramsim3"]
 	path = externals/dramsim3
 	url = https://github.com/bluelove8939/NeuroMTA-DRAMsim3.git
+[submodule "externals/booksim2"]
+	path = externals/booksim2
+	url = https://github.com/bluelove8939/NeuroMTA-booksim2.git
