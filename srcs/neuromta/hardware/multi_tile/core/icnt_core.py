@@ -3,6 +3,8 @@ from neuromta.framework import *
 from neuromta.hardware.multi_tile.context.mem_context import MemContext
 from neuromta.hardware.multi_tile.context.icnt_context import IcntContext
 
+from neuromta.hardware.companions.booksim import PYBOOKSIM2_AVAILABLE, BookSim2
+
 
 __all__ = [
     "IcntCore",
@@ -20,13 +22,34 @@ class IcntCore(Core):
         )
         
         self.icnt_context = icnt_context
-    
-    @core_command_method
+        
+        if self.icnt_context.booksim2_enable and not PYBOOKSIM2_AVAILABLE:
+            raise RuntimeError("[ERROR] BookSim2 is not available. Please install pybooksim2 to enable BookSim2 support.")
+        
+        if self.is_booksim2_enabled:
+            booksim2_module = BookSim2(config_file=self.icnt_context.booksim2_config_file)
+            self.register_companion_module("BOOKSIM2", booksim2_module)
+        
+    @property
+    def is_booksim2_enabled(self) -> bool:
+        return PYBOOKSIM2_AVAILABLE and self.icnt_context.booksim2_enable
+        
+    @core_kernel_method
     def noc_send_control_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int]):
+        if self.is_booksim2_enabled:
+            module = self.get_companion_module("BOOKSIM2")
+            cmd = module.create_cmd()
+
+    @core_kernel_method
+    def noc_send_data_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
         pass    # TODO: the actual implementation of the interconnect network will be replaced by the BookSim2
 
     @core_command_method
-    def noc_send_data_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
+    def _static_noc_send_control_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int]):
+        pass    # TODO: the actual implementation of the interconnect network will be replaced by the BookSim2
+
+    @core_command_method
+    def _static_noc_send_data_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
         pass    # TODO: the actual implementation of the interconnect network will be replaced by the BookSim2
 
 class IcntCoreCycleModel(CoreCycleModel):
@@ -35,8 +58,8 @@ class IcntCoreCycleModel(CoreCycleModel):
         
         self.core = core
 
-    def noc_send_control_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int]):
+    def _static_noc_send_control_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int]):
         return self.core.icnt_context.get_control_packet_latency(src_coord, dst_coord)
-    
-    def noc_send_data_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
+
+    def _static_noc_send_data_packet(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
         return self.core.icnt_context.get_data_packet_latency(src_coord, dst_coord, data_size)

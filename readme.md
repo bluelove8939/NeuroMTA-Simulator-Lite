@@ -6,11 +6,23 @@ NeuroMTA is a highly programmable cycle-level multi-tile deep learning accelerat
 
 ## Installation
 
+### NeuroMTA Simulator
+
 ```bash
-conda create -n neuromta python=3.11
+conda create -n neuromta python=3.11    # python >= 3.11
 conda activate neuromta
 pip install -r requirements.txt
 pip install -e .
+```
+
+### NeuroMTA Simulator Extension Modules
+
+```bash
+git submodule update --init --recursive
+conda activate neuromta
+pip install cython  # extension modules are built upon Cython!
+pip install ./externals/booksim2    # pybooksim2 (cycle-level NoC simulator)
+pip install ./externals/dramsim2    # pydramsim3 (cycle-level DRAM simulator)
 ```
 
 ## Deep Dive into NeuroMTA

@@ -52,8 +52,8 @@ class DMACore(Core):
         if self.is_dramsim3_enabled:
             module = self.get_companion_module("DRAMSIM3")
             cmd = module.create_cmd(addr=ptr.addr, size=ptr.size, is_write=True)
-            self.companion_send_cmd("DRAMSIM3", cmd)
-            self.companion_wait_cmd_executed("DRAMSIM3", cmd)
+            self.companion_send_cmd(module, cmd)
+            self.companion_wait_cmd_executed(module, cmd)
 
         self._static_mem_load_page_from_container(ptr, container)
         

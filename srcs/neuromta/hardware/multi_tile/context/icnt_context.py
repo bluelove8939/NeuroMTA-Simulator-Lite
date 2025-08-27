@@ -1,5 +1,5 @@
-import enum
 import torch
+from typing import Sequence
 
 from neuromta.framework import *
 
@@ -47,18 +47,25 @@ class IcntCoreMap:
     @property
     def grid(self) -> torch.Tensor:
         return self._grid
+    
+    @property
+    def shape(self) -> Sequence[int, int]:
+        return self._grid.shape
 
 
 class IcntConfig(dict):
     def __init__(
         self,
         
-        icnt_core_id: str=ICNT_CORE_NAME,
-        core_map: IcntCoreMap=IcntCoreMap.from_shape((4, 4)),
-        l1_mem_bank_size: int = parse_mem_cap_str("1MB"),
-        main_mem_bank_size: int = parse_mem_cap_str("1GB"),
-        flit_size: int = parse_mem_cap_str("16B"),
-        control_packet_size: int = parse_mem_cap_str("32B"),
+        icnt_core_id: str           = ICNT_CORE_NAME,
+        core_map: IcntCoreMap       = IcntCoreMap.from_shape((4, 4)),
+        l1_mem_bank_size: int       = parse_mem_cap_str("1MB"),
+        main_mem_bank_size: int     = parse_mem_cap_str("1GB"),
+        flit_size: int              = parse_mem_cap_str("16B"),
+        control_packet_size: int    = parse_mem_cap_str("32B"),
+        
+        booksim2_config_file: str   = None,
+        booksim2_enable: bool       = False,
     ):
         super().__init__()
         
@@ -68,6 +75,9 @@ class IcntConfig(dict):
         self["main_mem_bank_size"] = main_mem_bank_size
         self["flit_size"] = flit_size
         self["control_packet_size"] = control_packet_size
+
+        self["booksim2_config_file"] = booksim2_config_file
+        self["booksim2_enable"] = booksim2_enable
 
 class IcntContext:
     def __init__(
@@ -79,6 +89,9 @@ class IcntContext:
         main_mem_bank_size: int,
         flit_size: int,
         control_packet_size: int,
+        
+        booksim2_config_file: str=None,
+        booksim2_enable: bool=False,
     ):
         self._icnt_core_id = icnt_core_id
         self._core_map = core_map
@@ -86,6 +99,9 @@ class IcntContext:
         self._main_mem_bank_size = main_mem_bank_size
         self._flit_size = flit_size
         self._control_packet_size = control_packet_size
+        
+        self.booksim2_config_file = booksim2_config_file
+        self.booksim2_enable = booksim2_enable
         
         self._base_addr_to_coord_mappings:  dict[int, tuple[tuple[int, int], int]] = {}
         self._coord_to_base_addr_mappings:  dict[tuple[int, int], int] = {}
@@ -128,6 +144,10 @@ class IcntContext:
                 
         return None  # Address does not map to any core
     
+    def get_node_id_from_coord(self, coord: tuple[int, int]) -> int:
+        core_grid_width = self.core_map.grid.shape[-1]
+        return coord[0] * core_grid_width + coord[1]
+
     def compute_hop_cnt(self, src_coord: tuple[int, int], dst_coord: tuple[int, int]) -> int:
         return abs(src_coord[0] - dst_coord[0]) + abs(src_coord[1] - dst_coord[1])
     

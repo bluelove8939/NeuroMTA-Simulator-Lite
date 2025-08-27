@@ -572,6 +572,9 @@ class Kernel:
     
     
 class CompanionModule(metaclass=abc.ABCMeta):
+    def __init__(self):
+        self.module_id = None
+    
     @abc.abstractmethod
     def update_cycle_time(self, cycle_time: int):
         pass
@@ -904,23 +907,26 @@ class Core:
     
     def register_companion_module(self, module_id: str, module: CompanionModule):
         self._companion_modules[module_id] = module
+        module.module_id = module_id
         
     def get_companion_module(self, module_id: str) -> CompanionModule:
         return self._companion_modules.get(module_id, None)
     
     @core_command_method
-    def companion_send_cmd(self, module_id: str, cmd: Any):
-        cmod = self.get_companion_module(module_id)
-        if cmod is None:
-            raise Exception(f"[ERROR] Cannot send command to the unknown companion module '{module_id}'")
-        cmod.dispatch_cmd(cmd)
+    def companion_send_cmd(self, module: CompanionModule, cmd: Any):
+        if isinstance(module, str):
+            module = self.get_companion_module(module)
+            if module is None:
+                raise Exception(f"[ERROR] Cannot send command to the unknown companion module '{module}'")
+        module.dispatch_cmd(cmd)
         
     @core_conditional_command_method
-    def companion_wait_cmd_executed(self, module_id: str, cmd: Any):
-        cmod = self.get_companion_module(module_id)
-        if cmod is None:
-            raise Exception(f"[ERROR] Cannot wait for command execution from the unknown companion module '{module_id}'")
-        return cmod.check_cmd_executed(cmd)
+    def companion_wait_cmd_executed(self, module: CompanionModule, cmd: Any):
+        if isinstance(module, str):
+            module = self.get_companion_module(module)
+            if module is None:
+                raise Exception(f"[ERROR] Cannot send command to the unknown companion module '{module}'")
+        return module.check_cmd_executed(cmd)
 
     ###########################################################################
     # Properties
