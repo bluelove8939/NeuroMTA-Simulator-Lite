@@ -3,9 +3,9 @@ import torch
 from neuromta.framework import *
 
 from neuromta.hardware.multi_tile.context.mem_context import MemContext
-from neuromta.hardware.multi_tile.context.icnt_context import IcntContext
-from neuromta.hardware.multi_tile.context.vpu_context import VPUContext, VPUConfig, VPUOperator
-from neuromta.hardware.multi_tile.context.mxu_context import MXUContext, MXUConfig, MXUDataflow
+from neuromta.hardware.multi_tile.context.cmap_context import CmapContext
+from neuromta.hardware.multi_tile.context.vpu_context import VPUConfig, VPUOperator
+from neuromta.hardware.multi_tile.context.mxu_context import MXUConfig, MXUDataflow
 
 
 __all__ = [
@@ -18,7 +18,7 @@ class NPUCore(Core):
         self,
         coord: tuple[int, int],
         mem_context: MemContext, 
-        icnt_context: IcntContext,
+        cmap_context: CmapContext,
         vpu_config: VPUConfig = VPUConfig(),
         mxu_config: MXUConfig = MXUConfig(),
     ):
@@ -29,12 +29,12 @@ class NPUCore(Core):
         
         self.coord = coord
         self.mem_context = mem_context
-        self.icnt_context = icnt_context
+        self.cmap_context = cmap_context
         
         self.mem_handle = MemoryHandle(
             mem_id=self.coord.__str__(), 
-            base_addr=self.icnt_context.get_base_addr_from_coord(self.coord), 
-            size=self.icnt_context._l1_mem_bank_size
+            base_addr=self.cmap_context.get_base_addr_from_coord(self.coord), 
+            size=self.cmap_context.core_map.l1_mem_bank_size
         )
         
         self.mxu_context = mxu_config.create_context()
@@ -152,38 +152,27 @@ class NPUCore(Core):
         
     @core_kernel_method
     def async_noc_page_read(self, dst_ptr: Pointer, src_ptr: Pointer):
-        icnt_core_id = self.icnt_context.icnt_core_id
-        dst_owner_id = self.icnt_context.get_coord_from_address(dst_ptr.addr)
-        src_owner_id = self.icnt_context.get_coord_from_address(src_ptr.addr)
+        icnt_core_id = self.cmap_context.icnt_core_id
+        dst_owner_id = self.cmap_context.get_coord_from_address(dst_ptr.addr)
+        src_owner_id = self.cmap_context.get_coord_from_address(src_ptr.addr)
         container = DataContainer()
         
         if dst_owner_id != self.coord:
             raise Exception(f"[ERROR] The destination pointer {dst_ptr} is not owned by the current core {self.coord}.")
         
-        read_req_trans_msg = RPCMessage(
+        noc_trans_msg = RPCMessage(
             msg_type=0,
             src_core_id=self.core_id,
             dst_core_id=icnt_core_id,
             kernel_id=get_global_kernel_context().kernel_id,
-            cmd_id="noc_send_control_packet",
-        ).with_args(
-            src_coord=self.coord,
-            dst_coord=src_owner_id,
-        )
-        
-        read_data_trans_msg = RPCMessage(
-            msg_type=0,
-            src_core_id=self.core_id,
-            dst_core_id=icnt_core_id,
-            kernel_id=get_global_kernel_context().kernel_id,
-            cmd_id="noc_send_data_packet",
+            cmd_id="noc_create_data_read_transaction"
         ).with_args(
             src_coord=src_owner_id,
-            dst_coord=self.coord,
-            data_size=src_ptr.size
+            dst_coord=dst_owner_id,
+            data_size=dst_ptr.size,
         )
         
-        reader_msg = RPCMessage(
+        mem_reader_msg = RPCMessage(
             msg_type=0,
             src_core_id=self.core_id,   # source of the RPC message will be myself
             dst_core_id=src_owner_id,   # destination of the RPC message will be owner of the source pointer,
@@ -194,41 +183,45 @@ class NPUCore(Core):
             container=container
         )
         
-        self.async_rpc_send_req_msg(read_req_trans_msg)
-        self.async_rpc_wait_rsp_msg(read_req_trans_msg)
-
-        self.async_rpc_send_req_msg(reader_msg)
-        self.async_rpc_wait_rsp_msg(reader_msg)    # wait until the destination owner loads data to the container
+        # NOTE: The code below assumes that the memory access and NoC data transfer is done sequentially without any
+        # pipelining. I think that this scenario is unrealistic since the real hardware may attempt to pipeline the 
+        # data movement all the way through core->router->core.
+        # TODO: Check whether the latency model implemented below is accurate.
         
-        with new_parallel_thread():
-            self.async_rpc_send_req_msg(read_data_trans_msg)
-            self.async_rpc_wait_rsp_msg(read_data_trans_msg)    # wait until the destination owner loads data to the container
-        with new_parallel_thread():
-            self.mem_load_page_from_container(dst_ptr, container)  # load the data from the container to the destination pointer
+        # store page to container
+        self.async_rpc_send_req_msg(mem_reader_msg)
+        self.async_rpc_wait_rsp_msg(mem_reader_msg)
+        
+        # transfer page through NoC
+        self.async_rpc_send_req_msg(noc_trans_msg)
+        self.async_rpc_wait_rsp_msg(noc_trans_msg)
+        
+        # load page from container
+        self.mem_load_page_from_container(dst_ptr, container)
             
     @core_kernel_method
     def async_noc_page_write(self, dst_ptr: Pointer, src_ptr: Pointer):
-        icnt_core_id = self.icnt_context.icnt_core_id
-        dst_owner_id = self.icnt_context.get_coord_from_address(dst_ptr.addr)
-        src_owner_id = self.icnt_context.get_coord_from_address(src_ptr.addr)
+        icnt_core_id = self.cmap_context.icnt_core_id
+        dst_owner_id = self.cmap_context.get_coord_from_address(dst_ptr.addr)
+        src_owner_id = self.cmap_context.get_coord_from_address(src_ptr.addr)
         container = DataContainer()
         
         if src_owner_id != self.coord:
             raise Exception(f"[ERROR] The source pointer {dst_ptr} is not owned by the current core {self.coord}.")
         
-        write_data_trans_msg = RPCMessage(
+        noc_trans_msg = RPCMessage(
             msg_type=0,
             src_core_id=self.core_id,
             dst_core_id=icnt_core_id,
             kernel_id=get_global_kernel_context().kernel_id,
-            cmd_id="noc_send_data_packet",
+            cmd_id="noc_create_data_write_transaction"
         ).with_args(
-            src_coord=self.coord,
+            src_coord=src_owner_id,
             dst_coord=dst_owner_id,
-            data_size=src_ptr.size
+            data_size=dst_ptr.size,
         )
         
-        writer_msg = RPCMessage(
+        mem_writer_msg = RPCMessage(
             msg_type=0,
             src_core_id=self.core_id,   # source of the RPC message will be myself
             dst_core_id=dst_owner_id,   # destination of the RPC message will be owner of the source pointer,
@@ -239,14 +232,22 @@ class NPUCore(Core):
             container=container
         )
         
+        # NOTE: The code below assumes that the memory access and NoC data transfer is done sequentially without any
+        # pipelining. I think that this scenario is unrealistic since the real hardware may attempt to pipeline the 
+        # data movement all the way through core->router->core.
+        # TODO: Check whether the latency model implemented below is accurate.
+        
+        # store page to container
         self.mem_store_page_to_container(src_ptr, container)
         
-        with new_parallel_thread():
-            self.async_rpc_send_req_msg(write_data_trans_msg)
-            self.async_rpc_wait_rsp_msg(write_data_trans_msg)
-        with new_parallel_thread():
-            self.async_rpc_send_req_msg(writer_msg)
-            self.async_rpc_wait_rsp_msg(writer_msg)
+        # transfer page through NoC
+        self.async_rpc_send_req_msg(noc_trans_msg)
+        self.async_rpc_wait_rsp_msg(noc_trans_msg)
+        
+        # load page from container
+        self.async_rpc_send_req_msg(mem_writer_msg)
+        self.async_rpc_wait_rsp_msg(mem_writer_msg)
+            
             
     @core_kernel_method
     def async_noc_buffer_read(self, dst_ref: Reference, src_ref: Reference):

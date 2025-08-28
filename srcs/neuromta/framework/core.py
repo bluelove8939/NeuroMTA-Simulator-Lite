@@ -16,6 +16,7 @@ __all__ = [
     "DataContainer",
     "RPCMessage",
     "Command",
+    "ConditionalCommand",
     
     "Kernel",
 
@@ -355,19 +356,23 @@ class Command:
 
         self._cached_cycle: int = None
         self._cached_cycle_slack: int = 0
+        self._cached_issue_time: int = None
         
     def get_remaining_cycles(self, core: 'Core', kernel: 'Kernel') -> int:
         if self._cached_cycle is None:
             self._cached_cycle = self.run_cycle_model(core, kernel)
             
             if self._cached_cycle is None:
-                raise Exception(f"[ERROR] Cycle model returned None for command '{self.cmd_id}'")
+                self._cached_cycle = 1
             
             self._cached_cycle = max(1, self._cached_cycle)  # ensure at least 1 cycle
 
         return max(0, self._cached_cycle - self._cached_cycle_slack)
 
     def update_cycle_time(self, core: 'Core', kernel: 'Kernel', cycle_time: int):
+        if self._cached_issue_time is None:
+            self._cached_issue_time = core.timestamp
+            
         if cycle_time < 0:
             raise ValueError(f"[ERROR] Cycle time cannot be negative: {cycle_time}")
 
@@ -376,11 +381,13 @@ class Command:
         if self.is_finished(core, kernel):
             flag = self.run_behavioral_model(core, kernel)
             
-            if isinstance(flag, bool) and flag == False:
-                self._cached_cycle_slack -= cycle_time
+            # if isinstance(flag, bool) and flag == False:
+            #     self._cached_cycle_slack -= cycle_time
+            if flag is not None:
+                raise Exception(f"[ERROR] Behavioral model for command '{self.cmd_id}' returned '{flag}' even though the command is not conditional. Use 'core_conditional_command_method' instead if you want to implement any retry operation.")
 
         if self.is_finished(core, kernel):
-            core.run_command_debug_hook(kernel=kernel, cmd=self)
+            core.run_command_debug_hook(kernel=kernel, cmd=self, issue_time=self._cached_issue_time, commit_time=core.timestamp+cycle_time)
 
     def run_behavioral_model(self, core: 'Core', kernel: 'Kernel'):
         with new_global_context(GlobalContextMode.EXECUTE, core, kernel):
@@ -392,7 +399,7 @@ class Command:
             model = core.get_cycle_model(self.cmd_id)
 
             if model is None:
-                return 1
+                return None
             elif isinstance(model, int):
                 return model
             elif callable(model):
@@ -417,24 +424,43 @@ class ConditionalCommand(Command):
         self._is_async_finished = False
     
     def get_remaining_cycles(self, core: 'Core', kernel: 'Kernel') -> int:
-        return None  # Async commands do not have remaining cycles
+        if self._cached_cycle is None:
+            self._cached_cycle = self.run_cycle_model(core, kernel)
+            
+            if self._cached_cycle is None:
+                return None
+            
+            self._cached_cycle = max(1, self._cached_cycle)  # ensure at least 1 cycle
+        
+        return max(0, self._cached_cycle - self._cached_cycle_slack)
+        # if model is not None:
+        #     print(f"[WARNING] Conditional command '{self.cmd_id}' has a cycle model defined. This cycle model will be neglected. If you want to use a cycle model for a conditional command, please use 'core_command_method' and return boolean flag in the behavioral model indicating whether the command should be retried.")
+        # return None  # Async commands cannot not have remaining cycles
 
     def update_cycle_time(self, core: 'Core', kernel: 'Kernel', cycle_time: int):
+        if self._cached_issue_time is None:
+            self._cached_issue_time = core.timestamp
+
         if cycle_time < 0:
             raise ValueError(f"[ERROR] Cycle time cannot be negative: {cycle_time}")
+        
+        self._cached_cycle_slack += cycle_time
+        if self._cached_cycle is not None:          # the conditional command has its own cycle model
+            if self.get_remaining_cycles(core, kernel) <= 0:    # the remaining cycles are exhausted
+                self._cached_cycle_slack = 0        # initialize the cached cycle slack since the conditional command cannot be finished until the behavioral model returns True
 
         self._is_async_finished = self.run_behavioral_model(core, kernel)
 
         if self.is_finished(core, kernel):
-            core.run_command_debug_hook(kernel=kernel, cmd=self)
+            core.run_command_debug_hook(kernel=kernel, cmd=self, issue_time=self._cached_issue_time, commit_time=core.timestamp+cycle_time)
 
     def run_behavioral_model(self, core: 'Core', kernel: 'Kernel'):
         with new_global_context(GlobalContextMode.EXECUTE, core, kernel):
             model = core.get_behavioral_model(self.cmd_id)
             return model(*self.args, **self.kwargs)
         
-    def run_cycle_model(self, core: 'Core', kernel: 'Kernel') -> int:
-        return None  # Async commands do not have a cycle model
+    # def run_cycle_model(self, core: 'Core', kernel: 'Kernel') -> int:
+    #     return None  # Async commands do not have a cycle model
         
     def is_finished(self, core: 'Core', kernel: 'Kernel') -> bool:
         return self._is_async_finished
@@ -529,8 +555,10 @@ class Kernel:
             return None
         
         step = self.current_step(core)
-        
-        if isinstance(step, Command):
+
+        if isinstance(step, ConditionalCommand):
+            return step.get_remaining_cycles(core, kernel=self)
+        elif isinstance(step, Command):
             return step.get_remaining_cycles(core, kernel=self)
         else:
             return step.get_remaining_cycles(core=core)
@@ -579,17 +607,17 @@ class CompanionModule(metaclass=abc.ABCMeta):
     def update_cycle_time(self, cycle_time: int):
         pass
     
-    @abc.abstractmethod
-    def create_cmd(self, *args, **kwargs) -> Any:
-        pass
+    # @abc.abstractmethod
+    # def create_cmd(self, *args, **kwargs) -> Any:
+    #     pass
 
-    @abc.abstractmethod
-    def dispatch_cmd(self, cmd: Any):
-        pass
+    # @abc.abstractmethod
+    # def dispatch_cmd(self, cmd: Any):
+    #     pass
 
-    @abc.abstractmethod
-    def check_cmd_executed(self, cmd: Any) -> bool:
-        pass
+    # @abc.abstractmethod
+    # def check_cmd_executed(self, cmd: Any) -> bool:
+    #     pass
 
 
 class CoreCycleModel:
@@ -723,8 +751,6 @@ class Core:
         self._rpc_req_kernel_dispatch_routine()  # dispatch RPC kernel if the RPC request queue is not empty
         self._rpc_rsp_msg_receive_routine()      # receive RPC response message and register them as suspended
 
-        self._timestamp += cycle_time
-
         main_kernel_names = list(self._dispatched_main_kernels.keys())
         rpc_kernel_names = list(self._dispatched_rpc_kernels.keys())
 
@@ -742,8 +768,10 @@ class Core:
             if kernel.is_finished(self):
                 self._rpc_req_kernel_remove_and_rsp_send_routine(kernel_name)  # generate RPC response if the current ongoing RPC message is properly handled
 
-        for cmod_id, cmod in self._companion_modules.items():
+        for cmod in self._companion_modules.values():
             cmod.update_cycle_time(cycle_time=cycle_time)
+            
+        self._timestamp += cycle_time
     
     ###########################################################################
     # Debugging Methods
@@ -769,10 +797,10 @@ class Core:
         else:
             raise Exception(f"[ERROR] Hook ID '{hook_id}' is not registered")
         
-    def run_command_debug_hook(self, kernel: Kernel, cmd: Command):
+    def run_command_debug_hook(self, kernel: Kernel, cmd: Command, issue_time: int, commit_time: int):
         for hook_id, hook in self._registered_command_debug_hooks.items():
             try:
-                hook(self, kernel, cmd)
+                hook(self, kernel, cmd, issue_time, commit_time)
             except Exception as e:
                 print(f"[ERROR] Command debug hook '{hook_id}' failed with error: {e}")
                 
@@ -785,7 +813,7 @@ class Core:
     ###########################################################################
       
     def get_cycle_model(self, cmd_id: str) -> Callable:
-        return getattr(self._cycle_model, cmd_id) if (self._use_cycle_model and hasattr(self._cycle_model, cmd_id)) else 1
+        return getattr(self._cycle_model, cmd_id) if (self._use_cycle_model and hasattr(self._cycle_model, cmd_id)) else None
 
     def get_behavioral_model(self, cmd_id: str) -> Callable:
         if not hasattr(self, cmd_id):
@@ -911,22 +939,6 @@ class Core:
         
     def get_companion_module(self, module_id: str) -> CompanionModule:
         return self._companion_modules.get(module_id, None)
-    
-    @core_command_method
-    def companion_send_cmd(self, module: CompanionModule, cmd: Any):
-        if isinstance(module, str):
-            module = self.get_companion_module(module)
-            if module is None:
-                raise Exception(f"[ERROR] Cannot send command to the unknown companion module '{module}'")
-        module.dispatch_cmd(cmd)
-        
-    @core_conditional_command_method
-    def companion_wait_cmd_executed(self, module: CompanionModule, cmd: Any):
-        if isinstance(module, str):
-            module = self.get_companion_module(module)
-            if module is None:
-                raise Exception(f"[ERROR] Cannot send command to the unknown companion module '{module}'")
-        return module.check_cmd_executed(cmd)
 
     ###########################################################################
     # Properties

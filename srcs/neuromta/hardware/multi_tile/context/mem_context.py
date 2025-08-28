@@ -1,5 +1,6 @@
 import math
 from neuromta.framework import *
+from neuromta.hardware.companions.dramsim import DRAMSim3Config
 
 
 __all__ = [
@@ -22,8 +23,8 @@ class MainMemoryConfig:
         processor_clock_freq: int   = parse_freq_str("1GHz"),
         
         # DRAMSim3 Configuation (if needed)
-        dramsim3_config_name: str   = "GDDR5_8Gb_x32",
-        dramsim3_enable: bool       = False,
+        dramsim3_enable: bool           = False,
+        dramsim3_config: DRAMSim3Config = None,
     ):
         self.transfer_speed         = transfer_speed    # transfer speed per pin (MT/s)
         self.ch_io_width            = ch_io_width       # io channel width (bits)
@@ -32,7 +33,7 @@ class MainMemoryConfig:
         self.is_ddr                 = is_ddr
         self.processor_clock_freq   = processor_clock_freq
 
-        self.dramsim3_config_name   = dramsim3_config_name
+        self.dramsim3_config        = dramsim3_config
         self.dramsim3_enable        = dramsim3_enable
 
     def get_cycles(self, size: int) -> int:

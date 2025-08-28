@@ -1,176 +1,52 @@
-import torch
-from typing import Sequence
-
 from neuromta.framework import *
+from neuromta.hardware.companions.booksim import BookSim2Config
 
 
 __all__ = [
-    "IcntCoreType",
-    "IcntCoreMap",
     "IcntConfig",
     "IcntContext",
 ]
-
-
-ICNT_CORE_NAME = "ICNT"
-
-
-class IcntCoreType(int):
-    EMPTY   = 0
-    NPU     = 1
-    DMA     = 2
-    
-    @classmethod
-    def is_valid_core_type(cls, core_type: 'IcntCoreType') -> bool:
-        return 0 <= core_type <= 2
-
-
-class IcntCoreMap:
-    def __init__(self, grid: torch.Tensor):
-        self._grid = grid
-        
-        for core_type in self._grid.flatten().unique():
-            if not IcntCoreType.is_valid_core_type(core_type):
-                raise TypeError(f"The core type {core_type} is not a valid Tenstorrent core type.")
-
-    def core_coord(self, core_type: IcntCoreType) -> tuple[tuple[int, int]]:
-        coords = torch.argwhere(self._grid == core_type)
-        if coords.size == 0:
-            raise ValueError(f"No core of type {core_type} found in the core map.")
-        return tuple(map(tuple, coords.tolist()))
-        
-    @classmethod
-    def from_shape(cls, shape: tuple[int, int]) -> 'IcntCoreMap':
-        core_map = torch.full(shape, IcntCoreType.EMPTY, dtype=int)
-        return cls(core_map)
-    
-    @property
-    def grid(self) -> torch.Tensor:
-        return self._grid
-    
-    @property
-    def shape(self) -> Sequence[int, int]:
-        return self._grid.shape
 
 
 class IcntConfig(dict):
     def __init__(
         self,
         
-        icnt_core_id: str           = ICNT_CORE_NAME,
-        core_map: IcntCoreMap       = IcntCoreMap.from_shape((4, 4)),
-        l1_mem_bank_size: int       = parse_mem_cap_str("1MB"),
-        main_mem_bank_size: int     = parse_mem_cap_str("1GB"),
-        flit_size: int              = parse_mem_cap_str("16B"),
-        control_packet_size: int    = parse_mem_cap_str("32B"),
-        
-        booksim2_config_file: str   = None,
-        booksim2_enable: bool       = False,
+        flit_size: int                  = parse_mem_cap_str("16B"),
+        control_packet_size: int        = parse_mem_cap_str("32B"),
+        booksim2_enable: bool           = False,
+        booksim2_config: BookSim2Config = None,
     ):
         super().__init__()
         
-        self["icnt_core_id"] = icnt_core_id
-        self["core_map"] = core_map
-        self["l1_mem_bank_size"] = l1_mem_bank_size
-        self["main_mem_bank_size"] = main_mem_bank_size
         self["flit_size"] = flit_size
         self["control_packet_size"] = control_packet_size
 
-        self["booksim2_config_file"] = booksim2_config_file
+        self["booksim2_config"] = booksim2_config
         self["booksim2_enable"] = booksim2_enable
 
 class IcntContext:
     def __init__(
         self,
         
-        icnt_core_id: str,
-        core_map: IcntCoreMap,
-        l1_mem_bank_size: int,
-        main_mem_bank_size: int,
         flit_size: int,
         control_packet_size: int,
-        
-        booksim2_config_file: str=None,
+        booksim2_config: str=None,
         booksim2_enable: bool=False,
     ):
-        self._icnt_core_id = icnt_core_id
-        self._core_map = core_map
-        self._l1_mem_bank_size = l1_mem_bank_size
-        self._main_mem_bank_size = main_mem_bank_size
-        self._flit_size = flit_size
-        self._control_packet_size = control_packet_size
+        self.flit_size = flit_size
+        self.control_packet_size = control_packet_size
         
-        self.booksim2_config_file = booksim2_config_file
+        self.booksim2_config = booksim2_config
         self.booksim2_enable = booksim2_enable
-        
-        self._base_addr_to_coord_mappings:  dict[int, tuple[tuple[int, int], int]] = {}
-        self._coord_to_base_addr_mappings:  dict[tuple[int, int], int] = {}
-        
-        self._npu_core_coords: tuple[tuple[int, int]] = core_map.core_coord(IcntCoreType.NPU)
-        self._dma_core_coords: tuple[tuple[int, int]] = core_map.core_coord(IcntCoreType.DMA)
-
-        mem_base_addr = 0x00000000
-
-        for coord in self._npu_core_coords:
-            self._base_addr_to_coord_mappings[mem_base_addr] = (coord, self._main_mem_bank_size)
-            self._coord_to_base_addr_mappings[coord] = mem_base_addr
-            mem_base_addr += self._main_mem_bank_size
-        
-        for coord in self._dma_core_coords:
-            self._base_addr_to_coord_mappings[mem_base_addr] = (coord, self._l1_mem_bank_size)
-            self._coord_to_base_addr_mappings[coord] = mem_base_addr
-            mem_base_addr += self._l1_mem_bank_size
-            
-    def get_base_addr_from_coord(self, coord: tuple[int, int]) -> int:
-        if coord not in self._coord_to_base_addr_mappings:
-            raise ValueError(f"Coordinate {coord} does not map to a valid base address.")
-        return self._coord_to_base_addr_mappings[coord]
-            
-    def get_coord_from_address(self, addr: int) -> tuple[int, int]:
-        keys = sorted(self._base_addr_to_coord_mappings.keys())
-        left, right = 0, len(keys) - 1
-
-        while left <= right:
-            mid = (left + right) // 2
-            base_addr = keys[mid]
-            coord, size = self._base_addr_to_coord_mappings[base_addr]
-
-            if base_addr <= addr < (base_addr + size):
-                return coord
-            if base_addr > addr:
-                right = mid - 1
-            else:
-                left = mid + 1
-                
-        return None  # Address does not map to any core
-    
-    def get_node_id_from_coord(self, coord: tuple[int, int]) -> int:
-        core_grid_width = self.core_map.grid.shape[-1]
-        return coord[0] * core_grid_width + coord[1]
 
     def compute_hop_cnt(self, src_coord: tuple[int, int], dst_coord: tuple[int, int]) -> int:
         return abs(src_coord[0] - dst_coord[0]) + abs(src_coord[1] - dst_coord[1])
     
     def get_control_packet_latency(self, src_coord: tuple[int, int], dst_coord: tuple[int, int]) -> int:
         hop_cnt = self.compute_hop_cnt(src_coord, dst_coord)
-        return hop_cnt + (self._control_packet_size // self._flit_size)
+        return hop_cnt + (self.control_packet_size // self.flit_size)
     
     def get_data_packet_latency(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int) -> int:
         hop_cnt = self.compute_hop_cnt(src_coord, dst_coord)
-        return hop_cnt + (data_size // self._flit_size) + 1
-    
-    @property
-    def icnt_core_id(self) -> str:
-        return self._icnt_core_id
-    
-    @property
-    def core_map(self) -> IcntCoreMap:
-        return self._core_map
-    
-    @property
-    def npu_core_coords(self) -> tuple[tuple[int, int]]:
-        return self._npu_core_coords
-
-    @property
-    def dma_core_coords(self) -> tuple[tuple[int, int]]:
-        return self._dma_core_coords
+        return hop_cnt + (data_size // self.flit_size) + 1

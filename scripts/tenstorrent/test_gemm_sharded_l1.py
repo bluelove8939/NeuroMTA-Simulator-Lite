@@ -99,24 +99,24 @@ if __name__ == "__main__":
     torch.set_printoptions(linewidth=1024, sci_mode=False)
     
     config = TenstorrentConfig.BLACKHOLE()
-    mxu_config: MXUConfig = config["mxu_config"]
-    mxu_config["pe_arr_height"] = 8
-    mxu_config["pe_arr_width"] = 8
-    mxu_config["seq_len"] = 8
+    # mxu_config: MXUConfig = config["mxu_config"]
+    # mxu_config["pe_arr_height"] = 8
+    # mxu_config["pe_arr_width"] = 8
+    # mxu_config["seq_len"] = 8
 
     device = TenstorrentDevice(**config)
     device.initialize()
     device.change_sim_model_options(use_cycle_model=True, use_functional_model=True)
     
-    M = 16
-    N = 16
-    K = 16
+    M = 64
+    N = 64
+    K = 32
     dtype = torch.int32
     acc_dtype = torch.int32
     
-    m_tile = 8
-    n_tile = 8
-    k_tile = 8
+    m_tile = 32
+    n_tile = 32
+    k_tile = 32
     
     m_tile_num = M // m_tile
     n_tile_num = N // n_tile

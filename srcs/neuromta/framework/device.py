@@ -258,11 +258,18 @@ class Device:
         
         return self
     
-    def default_command_debug_hook(self, core: Core, kernel: Kernel, cmd: Command):
+    def default_command_debug_hook(self, core: Core, kernel: Kernel, cmd: Command, issue_time: int, commit_time: int):
         if self._verbose:
-            sys.stdout.write(f"[DEBUG] #{core.timestamp:<5d} | core: {core.core_id.__str__():<12s} | kernel: {kernel.kernel_id:<36s} | command: {cmd.cmd_id:<34s}\n")
-            
-    def run_kernels(self, verbose: bool=False, max_steps: int=-1, save_trace: bool=False, save_trace_dir: str=DEFAULT_TRACE_DIR):
+            sys.stdout.write(f"[DEBUG] {issue_time:<4d} - {commit_time:<4d} | core: {core.core_id.__str__():<8s} | kernel: {kernel.kernel_id:<40s} | command: {cmd.cmd_id:<45s}\n")
+
+    def run_kernels(
+        self, 
+        cycle_resolution:   int  = 1,                   # the number of cycles to update when all the cores are waiting and returning (0 | None) as the minimum remaining cycles
+        verbose:            bool = False,               # whether to print verbose debug information
+        max_steps:          int  = -1,                  # the maximum number of steps to run
+        save_trace:         bool = False,               # whether to save the trace
+        save_trace_dir:     str  = DEFAULT_TRACE_DIR    # the directory to save the trace
+    ):
         if not self.is_initialized:
             raise Exception("[ERROR] Device is not initialized. Please call initialize() before using this method.")
         
@@ -333,7 +340,7 @@ class Device:
                 break
             
             if remaining_cycles_min == 0 or remaining_cycles_min is None:
-                remaining_cycles_min = 1
+                remaining_cycles_min = cycle_resolution
             
             for core_id, q in device_to_core_sig_q_dict.items():
                 device_sig = _InternalDeviceCoreSignal(

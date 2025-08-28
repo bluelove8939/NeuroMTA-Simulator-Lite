@@ -28,7 +28,7 @@ if __name__ == "__main__":
     device.initialize()
     device.change_sim_model_options(use_cycle_model=True, use_functional_model=True)
     
-    page_size = 32
+    page_size = 32 * 32 * 4
     n_pages = 4
     dtype = torch.int32
     

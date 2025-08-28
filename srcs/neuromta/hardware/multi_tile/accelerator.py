@@ -5,6 +5,7 @@ from neuromta.framework import *
 
 from neuromta.hardware.multi_tile.context.mem_context import *
 from neuromta.hardware.multi_tile.context.icnt_context import *
+from neuromta.hardware.multi_tile.context.cmap_context import *
 from neuromta.hardware.multi_tile.context.mxu_context import *
 from neuromta.hardware.multi_tile.context.vpu_context import *
 
@@ -22,36 +23,38 @@ class MTAccelerator(Device):
     def __init__(
         self, 
         
-        icnt_config: IcntConfig, 
+        cmap_config: CmapConfig, 
+        icnt_config: IcntConfig,
         mem_config: MemConfig,
         mxu_config: MXUConfig,
         vpu_config: VPUConfig,
     ):
         super().__init__()
         
+        self.cmap_context = CmapContext(core_map_config=cmap_config)
         self.icnt_context = IcntContext(**icnt_config)
         self.mem_context  = MemContext(**mem_config)
         
         self.mxu_config = mxu_config
         self.vpu_config = vpu_config
         
-        self.npu_core_coords = self.icnt_context.npu_core_coords
-        self.dma_core_coords = self.icnt_context.dma_core_coords
+        self.npu_core_coords = self.cmap_context.npu_core_coords
+        self.dma_core_coords = self.cmap_context.dma_core_coords
 
         self.npu_coord_to_core_idx_mappings = {coord: idx for idx, coord in enumerate(self.npu_core_coords)}
         self.dma_coord_to_core_idx_mappings = {coord: idx for idx, coord in enumerate(self.dma_core_coords)}
 
         self.npu_cores: list[NPUCore] = [
-            NPUCore(coord=coord, mem_context=self.mem_context, icnt_context=self.icnt_context, mxu_config=self.mxu_config, vpu_config=self.vpu_config)
+            NPUCore(coord=coord, mem_context=self.mem_context, cmap_context=self.cmap_context, mxu_config=self.mxu_config, vpu_config=self.vpu_config)
             for coord in self.npu_core_coords
         ]
         
         self.dma_cores: list[DMACore] = [
-            DMACore(coord=coord, mem_context=self.mem_context, icnt_context=self.icnt_context)
+            DMACore(coord=coord, mem_context=self.mem_context, cmap_context=self.cmap_context)
             for coord in self.dma_core_coords
         ]
         
-        self.icnt_core = IcntCore(icnt_context=self.icnt_context)
+        self.icnt_core = IcntCore(cmap_context=self.cmap_context, icnt_context=self.icnt_context)
         
     def get_core_from_coord(self, coord: tuple[int, int]) -> NPUCore | DMACore:
         if coord in self.npu_coord_to_core_idx_mappings:
@@ -66,7 +69,7 @@ class MTAccelerator(Device):
         return core.mem_handle
     
     def get_mem_handle_from_addr(self, addr: int) -> MemoryHandle:
-        coord = self.icnt_context.get_coord_from_address(addr)
+        coord = self.cmap_context.get_coord_from_address(addr)
         return self.get_mem_handle_from_coord(coord)
 
     def create_local_l1_circular_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference | list[Reference]:
@@ -105,7 +108,7 @@ class MTAccelerator(Device):
 
     def create_sharded_l1_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference:
         if coords is None:
-            coords = self.icnt_context.core_map.core_coord(IcntCoreType.NPU)
+            coords = self.cmap_context.core_map.core_coord(CmapCoreType.NPU)
         if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
             coords = [coords]
 
@@ -116,7 +119,7 @@ class MTAccelerator(Device):
 
     def create_sharded_main_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference:
         if coords is None:
-            coords = self.icnt_context.core_map.core_coord(IcntCoreType.DMA)
+            coords = self.cmap_context.core_map.core_coord(CmapCoreType.DMA)
         if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
             coords = [coords]
         
