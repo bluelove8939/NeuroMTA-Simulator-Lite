@@ -12,6 +12,8 @@ from neuromta.hardware.multi_tile.context.vpu_context import *
 from neuromta.hardware.multi_tile.core.npu_core import *
 from neuromta.hardware.multi_tile.core.dma_core import *
 from neuromta.hardware.multi_tile.core.icnt_core import *
+from neuromta.hardware.multi_tile.core.dramsim_core import *
+from neuromta.hardware.multi_tile.core.booksim_core import *
 
 
 __all__ = [
@@ -55,6 +57,10 @@ class MTAccelerator(Device):
         ]
         
         self.icnt_core = IcntCore(cmap_context=self.cmap_context, icnt_context=self.icnt_context)
+        
+        # extensions
+        self.dramsim_core = DRAMSimCore(mem_context=self.mem_context, cmap_context=self.cmap_context)
+        self.booksim_core = BookSimCore(icnt_context=self.icnt_context, cmap_context=self.cmap_context)
         
     def get_core_from_coord(self, coord: tuple[int, int]) -> NPUCore | DMACore:
         if coord in self.npu_coord_to_core_idx_mappings:

@@ -10,14 +10,24 @@ __all__ = [
 
 
 class TraceEntry:
-    def __init__(self, timestamp: int, core_id: Any, kernel_id: str, cmd_id: str, issue_time: int, commit_time: int, estimated_cycles: int):
-        self.timestamp = timestamp
-        self.core_id = core_id
-        self.kernel_id = kernel_id
-        self.cmd_id = cmd_id
+    def __init__(self, core: Core, kernel: Kernel, cmd: Command, issue_time: int, commit_time: int):
+        self.timestamp = core.timestamp
+        self.core_id = TraceEntry.convert_valid_core_id(core.core_id)
+        if kernel.root_kernel is not None:
+            self.root_kernel_id = kernel.root_kernel.kernel_id
+        else:
+            self.root_kernel_id = kernel.kernel_id
+        self.kernel_id = kernel.kernel_id
+        self.cmd_id = cmd.cmd_id
         self.issue_time = issue_time
         self.commit_time = commit_time
-        self.estimated_cycles = estimated_cycles
+        self.estimated_cycles = cmd._cached_cycle  # if not isinstance(cmd, ConditionalCommand) else None
+        
+    @staticmethod
+    def convert_valid_core_id(core_id: Any) -> str:
+        core_id: str = core_id.__str__()
+        core_id = core_id.replace("/", "_").replace("\\", "_").replace(" ", "").replace(",", "_").replace("(", "").replace(")", "")
+        return core_id
 
     def __getstate__(self):
         return {
@@ -41,7 +51,7 @@ class TraceEntry:
         
     @staticmethod
     def get_csv_header() -> str:
-        return "timestamp,core_id,kernel_id,command_id,issue_time,commit_time,simulated_cycles,estimated_cycles,slack"
+        return "timestamp,core_id,root_kernel_id,kernel_id,command_id,issue_time,commit_time,simulated_cycles,estimated_cycles,slack"
 
     def to_csv_entry(self) -> str:
         simulated_cycles = self.commit_time - self.issue_time
@@ -49,22 +59,16 @@ class TraceEntry:
             slack = None
         else:
             slack = simulated_cycles - self.estimated_cycles
-        return f"{self.timestamp},{self.core_id},{self.kernel_id},{self.cmd_id},{self.issue_time},{self.commit_time},{simulated_cycles},{self.estimated_cycles},{slack}"
+        return f"{self.timestamp},{self.core_id},{self.root_kernel_id},{self.kernel_id},{self.cmd_id},{self.issue_time},{self.commit_time},{simulated_cycles},{self.estimated_cycles},{slack}"
 
     def __str__(self):
-        return f"CommandTrace(timestamp={self.timestamp}, core_id={self.core_id}, kernel_id={self.kernel_id}, cmd_id={self.cmd_id}, issue_time={self.issue_time}, commit_time={self.commit_time})"
+        return f"CommandTrace(timestamp={self.timestamp}, core_id={self.core_id}, root_kernel_id={self.root_kernel_id}, kernel_id={self.kernel_id}, cmd_id={self.cmd_id}, issue_time={self.issue_time}, commit_time={self.commit_time})"
 
 
 class Tracer:
     def __init__(self):
         self._trace_entries: list[TraceEntry] = []
         self._debug_hook_handles: dict[str, str] = {}
-    
-    @staticmethod
-    def convert_valid_core_id(core_id: Any) -> str:
-        core_id: str = core_id.__str__()
-        core_id = core_id.replace("/", "_").replace("\\", "_").replace(" ", "").replace(",", "_").replace("(", "").replace(")", "")
-        return core_id
         
     def __getstate__(self):
         return {
@@ -76,13 +80,14 @@ class Tracer:
 
     def core_debug_hook(self, core: Core, kernel: Kernel, cmd: Command, issue_time: int, commit_time: int):
         entry = TraceEntry(
-            timestamp=core.timestamp,
-            core_id=self.convert_valid_core_id(core.core_id),
-            kernel_id=kernel.kernel_id,
-            cmd_id=cmd.cmd_id,
-            issue_time=issue_time,
-            commit_time=commit_time,
-            estimated_cycles=cmd._cached_cycle if not isinstance(cmd, ConditionalCommand) else None
+            # timestamp=core.timestamp,
+            # core_id=self.convert_valid_core_id(core.core_id),
+            # kernel_id=kernel.kernel_id,
+            # cmd_id=cmd.cmd_id,
+            # issue_time=issue_time,
+            # commit_time=commit_time,
+            # estimated_cycles=cmd._cached_cycle if not isinstance(cmd, ConditionalCommand) else None
+            core, kernel, cmd, issue_time, commit_time,
         )
         self.add_trace(entry)
         

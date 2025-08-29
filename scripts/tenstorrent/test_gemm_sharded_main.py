@@ -110,7 +110,7 @@ if __name__ == "__main__":
     
     M = 64
     N = 64
-    K = 32
+    K = 64
     dtype = torch.int32
     acc_dtype = torch.int32
     

@@ -1,17 +1,23 @@
-import enum
+import os
+import math
 import torch
 
 from neuromta.framework import *
 from neuromta.hardware.multi_tile import *
 
 from neuromta.hardware.companions.booksim import PYBOOKSIM2_AVAILABLE
-from neuromta.hardware.companions.dramsim import PYDRAMSIM3_AVAILABLE, DRAMSim3Config
+from neuromta.hardware.companions.dramsim import PYDRAMSIM3_AVAILABLE, DRAMSim3Config, create_new_dramsim_config_file
 
 
 __all__ = [
     "TenstorrentConfig",
     "TenstorrentDevice",
 ]
+
+
+TENSTORRENT_IP_ROOT = os.path.abspath(os.path.dirname(__file__))
+TENSTORRENT_IP_CACHE_DIR = os.path.join(TENSTORRENT_IP_ROOT, ".cache")
+TENSTORRENT_IP_DRAMSIM_CONFIG_FMT = os.path.join(TENSTORRENT_IP_CACHE_DIR, "dramsim_{config_name}.ini").format
 
 
 class TenstorrentConfig(dict):
@@ -34,12 +40,14 @@ class TenstorrentConfig(dict):
         
     @classmethod
     def BLACKHOLE(cls) -> 'TenstorrentConfig':
+        config_name = "blackhole"
+        
         processor_clock_freq = parse_freq_str("1.35GHz")
         
         cmap_config = CmapConfig.from_shape(
             shape=(12, 16),
             l1_mem_bank_size=parse_mem_cap_str("1.5MB"),
-            main_mem_bank_size=parse_mem_cap_str("1.2GB"),
+            main_mem_bank_size=parse_mem_cap_str("1GB"),
         )
         
         cmap_config.grid[ :, 0   ] = CmapCoreType.DMA
@@ -66,8 +74,23 @@ class TenstorrentConfig(dict):
         )
 
         if PYDRAMSIM3_AVAILABLE:
+            dramsim3_config_path = TENSTORRENT_IP_DRAMSIM_CONFIG_FMT(config_name=config_name)
+            
+            n_dma_core              = cmap_config.count_core(CmapCoreType.DMA)
+            dma_core_per_channel    = 8
+            total_main_mem_size     = cmap_config.main_mem_bank_size * n_dma_core
+            n_channel               = math.ceil(n_dma_core / dma_core_per_channel)
+            channel_size            = total_main_mem_size // n_channel // (1024 * 1024)  # in MB
+
+            create_new_dramsim_config_file(
+                src_config_path="GDDR6_8Gb_x16.ini",
+                new_config_path=dramsim3_config_path,
+                channel_size=channel_size,   # MB
+                n_channel=n_channel,
+            )
+            
             dramsim3_config = DRAMSim3Config(
-                config_path="GDDR5_8Gb_x32",
+                config_path=dramsim3_config_path,
                 processor_clock_freq=processor_clock_freq,
                 cmd_wait_resolution=5,
             )
@@ -75,13 +98,15 @@ class TenstorrentConfig(dict):
             dramsim3_config = None
 
         main_mem_config = MainMemoryConfig(
-            transfer_speed=9600,      # MT/s (DDR6 typical speed)
-            ch_io_width=128,          # bits (DDR6 typical channel width)
+            # STATIC MEMORY CONFIG (used if pydramsim is not available)
+            transfer_speed=7000,      # MT/s (DDR6 typical speed)
+            ch_io_width=32,           # bits (DDR6 typical channel width)
             ch_num=1,                 # channels (example for DDR6)
-            burst_len=256,            # bytes (typical burst length)
+            burst_len=32,             # bytes (typical burst length)
             is_ddr=True,
             processor_clock_freq=processor_clock_freq,
             
+            # DRAMSIM CONFIG
             dramsim3_enable=PYDRAMSIM3_AVAILABLE,
             dramsim3_config=dramsim3_config,
         )

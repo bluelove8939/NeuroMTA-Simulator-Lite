@@ -13,6 +13,8 @@ __all__ = [
 
 
 ICNT_CORE_NAME = "ICNT"
+DRAMSIM_CORE_NAME = "DRAMSIM"
+BOOKSIM_CORE_NAME = "BOOKSIM"
 
 
 class CmapCoreType(int):
@@ -40,6 +42,9 @@ class CmapConfig:
         self.l1_mem_bank_size   = l1_mem_bank_size
         self.main_mem_bank_size = main_mem_bank_size
         
+        self.dramsim_core_id    = DRAMSIM_CORE_NAME
+        self.booksim_core_id    = BOOKSIM_CORE_NAME
+
         for core_type in self._grid.flatten().unique():
             if not CmapCoreType.is_valid_core_type(core_type):
                 raise TypeError(f"The core type {core_type} is not a valid Tenstorrent core type.")
@@ -67,6 +72,9 @@ class CmapConfig:
             yr=1,   # no concentration by default
             cmd_wait_resolution=cmd_wait_resolution,
         )
+        
+    def count_core(self, core_type: CmapCoreType) -> int:
+        return torch.count_nonzero(self._grid == core_type).item()
         
     @classmethod
     def from_shape(
@@ -157,3 +165,11 @@ class CmapContext:
     @property
     def icnt_core_id(self) -> str:
         return self._core_map_config.icnt_core_id
+    
+    @property
+    def dramsim_core_id(self) -> str:
+        return self._core_map_config.dramsim_core_id
+    
+    @property
+    def booksim_core_id(self) -> str:
+        return self._core_map_config.booksim_core_id

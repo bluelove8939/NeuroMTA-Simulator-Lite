@@ -836,6 +836,9 @@ class Core:
     # Asynchronous RPC Methods (Inter-Core Communication)
     ###########################################################################
     
+    def check_rpc_inbox(self, target_core_id: str):
+        return target_core_id in self._rpc_req_send_inbox
+
     @core_command_method
     def async_rpc_send_req_msg(self, req_msg: RPCMessage):
         req_msg.start_time = self._timestamp  # set the start time of the message

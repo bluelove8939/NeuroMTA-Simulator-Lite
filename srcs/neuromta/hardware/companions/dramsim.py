@@ -1,5 +1,6 @@
 import os
 import math
+import configparser
 
 from neuromta.framework import *
 
@@ -14,7 +15,32 @@ __all__ = [
     "PYDRAMSIM3_AVAILABLE",
     "DRAMSim3",
     "DRAMSim3Config"
+    "create_new_dramsim_config_file",
 ]
+
+
+def create_new_dramsim_config_file(
+    src_config_path: str, 
+    new_config_path: str,
+    
+    channel_size: int,
+    n_channel: int,
+):
+    if not os.path.isfile(src_config_path):
+        src_config_path = pydramsim3.PYDRAMSIM_MSYS_CONFIG_PATH(src_config_path)
+    if not os.path.isfile(src_config_path):
+        raise FileNotFoundError(f"[ERROR] DRAMSim3 config file '{src_config_path}' not found.")
+
+    os.makedirs(os.path.dirname(new_config_path), exist_ok=True)
+
+    src_config = configparser.ConfigParser()
+    src_config.read(src_config_path)
+    
+    src_config["system"]["channel_size"] = str(channel_size)
+    src_config["system"]["channels"] = str(n_channel)
+
+    with open(new_config_path, "w") as new_file:
+        src_config.write(new_file)
 
 
 class DRAMSim3Config:

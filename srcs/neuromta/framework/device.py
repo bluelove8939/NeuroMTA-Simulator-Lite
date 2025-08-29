@@ -8,7 +8,7 @@ import multiprocessing as mp
 from typing import Sequence, Callable, Any
 
 from neuromta.framework.core import Core, Kernel, Command
-from neuromta.framework.tracer import Tracer
+from neuromta.framework.tracer import Tracer, TraceEntry
 
 
 __all__ = [
@@ -119,7 +119,7 @@ class SingleCoreProcess(mp.Process):
         
     def _on_sigterm(self, signum, frame):
         if self.save_trace and (not self.tracer.is_empty):
-            core_id_str_expr = self.tracer.convert_valid_core_id(self.core.core_id)
+            core_id_str_expr = TraceEntry.convert_valid_core_id(self.core.core_id)
             trace_path = os.path.join(self.save_trace_dir, f"{core_id_str_expr}.csv")
             self.tracer.save_traces_as_file(trace_path)
             print(f"[INFO] Trace for core {self.core.core_id} saved to \"{trace_path}\"")
