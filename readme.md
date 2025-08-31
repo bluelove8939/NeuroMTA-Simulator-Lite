@@ -18,10 +18,17 @@ pip install -e .
 ### NeuroMTA Simulator Extension Modules
 
 ```bash
+# Common Initialization
 git submodule update --init --recursive
 conda activate neuromta
 pip install cython  # extension modules are built upon Cython!
+
+# Install PyBookSim (python extension of booksim2)
+sudo apt update
+sudo apt install flex bison
 pip install ./externals/booksim2    # pybooksim2 (cycle-level NoC simulator)
+
+# Install PyDRAMSim (python extension of dramsim3)
 pip install ./externals/dramsim2    # pydramsim3 (cycle-level DRAM simulator)
 ```
 
