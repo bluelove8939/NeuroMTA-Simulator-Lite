@@ -154,10 +154,10 @@ if __name__ == "__main__":
     psum_size = psum.numel() * psum.element_size()
     ofm_size  = ofm.numel()  * ofm.element_size()
     
-    bf_ifm_ptr:  Reference = device.create_sharded_main_buffer(page_size=ifm_tile_size, n_pages=ifm_tile_num, coords=dma_core_group)
-    bf_wgt_ptr:  Reference = device.create_sharded_main_buffer(page_size=wgt_tile_size, n_pages=wgt_tile_num, coords=dma_core_group)
-    bf_psum_ptr: Reference = device.create_sharded_main_buffer(page_size=ofm_tile_size, n_pages=ofm_tile_num, coords=dma_core_group)
-    bf_ofm_ptr:  Reference = device.create_sharded_main_buffer(page_size=ofm_tile_size, n_pages=ofm_tile_num, coords=dma_core_group)
+    bf_ifm_ptr:  Reference = device.create_sharded_main_buffer(page_size=ifm_tile_size, n_pages=ifm_tile_num)
+    bf_wgt_ptr:  Reference = device.create_sharded_main_buffer(page_size=wgt_tile_size, n_pages=wgt_tile_num)
+    bf_psum_ptr: Reference = device.create_sharded_main_buffer(page_size=ofm_tile_size, n_pages=ofm_tile_num)
+    bf_ofm_ptr:  Reference = device.create_sharded_main_buffer(page_size=ofm_tile_size, n_pages=ofm_tile_num)
 
     cb_ifm_ptrs:  list[Reference] = device.create_local_l1_circular_buffer(page_size=ifm_tile_size, n_pages=cb_n_pages, coords=npu_core_group)
     cb_wgt_ptrs:  list[Reference] = device.create_local_l1_circular_buffer(page_size=wgt_tile_size, n_pages=cb_n_pages, coords=npu_core_group)

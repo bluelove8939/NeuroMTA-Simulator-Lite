@@ -42,19 +42,34 @@ class TenstorrentConfig(dict):
     def BLACKHOLE(cls) -> 'TenstorrentConfig':
         config_name = "blackhole"
         
-        processor_clock_freq = parse_freq_str("1.35GHz")
+        processor_clock_freq    = parse_freq_str("1GHz")
+        main_mem_channel_size   = parse_mem_cap_str("4GB")
+        l1_mem_bank_size        = parse_mem_cap_str("1.5MB")
+
+        cmap_shape = (12, 16)
+        n_npu_core = 12 * 14
+        n_dma_core = 12 * 2
+        n_dma_core_per_channel    = 3
+        n_main_mem_channels = math.ceil(n_dma_core / n_dma_core_per_channel)
         
-        cmap_config = CmapConfig.from_shape(
-            shape=(12, 16),
-            l1_mem_bank_size=parse_mem_cap_str("1.5MB"),
-            main_mem_bank_size=parse_mem_cap_str("1GB"),
+        cmap_config = CmapConfig(
+            shape=cmap_shape,
+            n_l1_mem_bank=n_npu_core,
+            n_main_mem_channels=n_main_mem_channels,
+            l1_mem_bank_size=l1_mem_bank_size,
+            main_mem_channel_size=main_mem_channel_size,
         )
         
-        cmap_config.grid[ :, 0   ] = CmapCoreType.DMA
-        cmap_config.grid[ :, 8   ] = CmapCoreType.DMA
-        cmap_config.grid[2:, 1:8 ] = CmapCoreType.NPU
-        cmap_config.grid[2:, 9:16] = CmapCoreType.NPU
-        
+        for row in range(12):
+            ch_row = row // n_dma_core_per_channel   # the channel ID of the given row
+
+            cmap_config.add_core(CmapCoreType.DMA, coord=(row, 0), mem_bank_idx=ch_row * 2)         # DMA cores that are located at 3 consecutive row will be assigned the same memory channel
+            cmap_config.add_core(CmapCoreType.DMA, coord=(row, 8), mem_bank_idx=ch_row * 2 + 1)     # DMA cores that are located at 3 consecutive row will be assigned the same memory channel
+
+            for i in range(7):
+                cmap_config.add_core(CmapCoreType.NPU, coord=(row, 1 + i), mem_bank_idx=(row * 14) + i)
+                cmap_config.add_core(CmapCoreType.NPU, coord=(row, 9 + i), mem_bank_idx=(row * 14) + i + 7)
+
         if PYBOOKSIM2_AVAILABLE:
             booksim2_config = cmap_config.create_booksim2_config(
                 cmd_wait_resolution=50,
@@ -63,7 +78,7 @@ class TenstorrentConfig(dict):
             booksim2_config = None
         
         icnt_config = IcntConfig(
-            flit_size=parse_mem_cap_str("16B"),
+            flit_size=parse_mem_cap_str("16B"),  # TODO: (flit size) * (processor clock) * (full-duplex) * (node per router) = 16B * 1GHz * 2 * 6 = 192GB/s (???)
             control_packet_size=parse_mem_cap_str("32B"),
             booksim2_enable=PYBOOKSIM2_AVAILABLE,
             booksim2_config=booksim2_config,
@@ -74,19 +89,14 @@ class TenstorrentConfig(dict):
         )
 
         if PYDRAMSIM3_AVAILABLE:
-            dramsim3_config_path = TENSTORRENT_IP_DRAMSIM_CONFIG_FMT(config_name=config_name)
-            
-            n_dma_core              = cmap_config.count_core(CmapCoreType.DMA)
-            dma_core_per_channel    = 8
-            total_main_mem_size     = cmap_config.main_mem_bank_size * n_dma_core
-            n_channel               = math.ceil(n_dma_core / dma_core_per_channel)
-            channel_size            = total_main_mem_size // n_channel // (1024 * 1024)  # in MB
+            dramsim3_config_path    = TENSTORRENT_IP_DRAMSIM_CONFIG_FMT(config_name=config_name)
+            dramsim3_channel_size   = main_mem_channel_size // (1024 * 1024)    # GB -> MB
 
             create_new_dramsim_config_file(
-                src_config_path="GDDR6_8Gb_x16.ini",
+                src_config_path="GDDR5_8Gb_x32.ini",  # TODO: originally, the source config file should be GDDR6_8Gb_x16.ini, but there are some errors ...
                 new_config_path=dramsim3_config_path,
-                channel_size=channel_size,   # MB
-                n_channel=n_channel,
+                channel_size=dramsim3_channel_size,
+                n_channel=n_main_mem_channels,
             )
             
             dramsim3_config = DRAMSim3Config(

@@ -34,7 +34,7 @@ class NPUCore(Core):
         self.mem_handle = MemoryHandle(
             mem_id=self.coord.__str__(), 
             base_addr=self.cmap_context.get_base_addr_from_coord(self.coord), 
-            size=self.cmap_context.core_map.l1_mem_bank_size
+            size=self.cmap_context.config.l1_mem_bank_size
         )
         
         self.mxu_context = mxu_config.create_context()
@@ -153,13 +153,14 @@ class NPUCore(Core):
     @core_kernel_method
     def async_noc_page_read(self, dst_ptr: Pointer, src_ptr: Pointer):
         icnt_core_id = self.cmap_context.icnt_core_id
-        dst_owner_id = self.cmap_context.get_coord_from_address(dst_ptr.addr)
-        src_owner_id = self.cmap_context.get_coord_from_address(src_ptr.addr)
         container = DataContainer()
         
-        if dst_owner_id != self.coord:
-            raise Exception(f"[ERROR] The destination pointer {dst_ptr} is not owned by the current core {self.coord}.")
+        if self.coord != self.cmap_context.get_coord_from_address(dst_ptr.addr):
+            raise Exception(f"[ERROR] The destination pointer {dst_ptr.addr} is not owned by the current core {self.coord}.")
         
+        dst_owner_id = self.coord
+        src_owner_id = self.cmap_context.get_coord_from_address(src_ptr.addr, hash_src_coord=self.coord)  # the number of destination can be more than 1 -> use hashing with the current coordinate
+
         noc_trans_msg = RPCMessage(
             msg_type=0,
             src_core_id=self.core_id,
@@ -202,12 +203,13 @@ class NPUCore(Core):
     @core_kernel_method
     def async_noc_page_write(self, dst_ptr: Pointer, src_ptr: Pointer):
         icnt_core_id = self.cmap_context.icnt_core_id
-        dst_owner_id = self.cmap_context.get_coord_from_address(dst_ptr.addr)
-        src_owner_id = self.cmap_context.get_coord_from_address(src_ptr.addr)
         container = DataContainer()
         
-        if src_owner_id != self.coord:
+        if self.coord != self.cmap_context.get_coord_from_address(src_ptr.addr):
             raise Exception(f"[ERROR] The source pointer {dst_ptr} is not owned by the current core {self.coord}.")
+        
+        src_owner_id = self.coord
+        dst_owner_id = self.cmap_context.get_coord_from_address(dst_ptr.addr, hash_src_coord=self.coord)  # the number of destination can be more than 1 -> use hashing with the current coordinate
         
         noc_trans_msg = RPCMessage(
             msg_type=0,

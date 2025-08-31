@@ -34,8 +34,8 @@ if __name__ == "__main__":
     
     npu_core = device.npu_cores[0]
     
-    main_in_ptr     = device.create_sharded_main_buffer(page_size, n_pages, coords=[device.dma_core_coords[0],])
-    main_out_ptr    = device.create_sharded_main_buffer(page_size, n_pages, coords=[device.dma_core_coords[0],])
+    main_in_ptr     = device.create_sharded_main_buffer(page_size, n_pages)
+    main_out_ptr    = device.create_sharded_main_buffer(page_size, n_pages)
     l1_ptr          = device.create_local_l1_buffer(page_size, 1, coords=[npu_core.coord,])
 
     for i in range(n_pages):

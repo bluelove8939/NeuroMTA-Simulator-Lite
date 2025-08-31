@@ -1,7 +1,7 @@
 import enum
 import math
 import torch
-from typing import Any
+from typing import Any, Sequence
 
 
 __all__ = [
@@ -16,8 +16,8 @@ __all__ = [
     
     "create_var_ptr",
     "create_page_ptr",
-    "create_buffer_ref",
-    "create_sharded_buffer_ref",
+    "create_uniform_buffer",
+    "create_distributed_buffer",
 ]
 
 
@@ -334,10 +334,16 @@ class CircularBufferHandle(BufferHandle):
 
 
 class MemoryHandle:
-    def __init__(self, mem_id: str, base_addr: int, size: int):
+    def __init__(self, mem_id: str, base_addr: int, size: int, n_channels: int=1):
         self._mem_id = mem_id
         self._base_addr = base_addr
         self._size = size
+        self._n_channels = n_channels
+        self._channel_size = self._size // self._n_channels
+        
+        if self._size % self._n_channels != 0:
+            raise Exception(f"[ERROR] Memory size {self._size} is not divisible by number of channels {self._n_channels}.")
+        
         self._data_elements: dict[int, _DataElement] = {}
         
     def __getstate__(self):
@@ -363,9 +369,9 @@ class MemoryHandle:
                 
     def get_data_element(self, key: Any) -> _DataElement:
         if isinstance(key, int):
-            return self._data_elements.get(key, None)
+            return self._data_elements[key]
         elif isinstance(key, Pointer):
-            return self._data_elements.get(key.addr, None)
+            return self._data_elements[key.addr]
         else:
             raise TypeError(f"[ERROR] Key must be an int or Pointer, got {type(key)}.")
         
@@ -432,9 +438,11 @@ class MemoryHandle:
                 
         return -1
 
-    def allocate_var_ptr(self, var_size: int, initial_value: Any) -> Pointer | None:
-        for i in range(self.size // var_size):
-            addr = self.base_addr + i * var_size
+    def allocate_var_ptr(self, var_size: int, initial_value: Any, channel_id: int=0) -> Pointer | None:
+        ch_st_addr = self.base_addr + channel_id * self._channel_size
+        ch_ed_addr = self.base_addr + (channel_id + 1) * self._channel_size
+        
+        for addr in range(ch_st_addr, ch_ed_addr - var_size + 1, var_size):
             overlap = self.get_overlapping_data_addr(addr, size=var_size)
             
             if overlap < 0:
@@ -445,9 +453,11 @@ class MemoryHandle:
                 continue
         return None
     
-    def allocate_page_ptr(self, page_size: int) -> Pointer | None:
-        for i in range(self.size // page_size):
-            addr = self.base_addr + i * page_size
+    def allocate_page_ptr(self, page_size: int, channel_id: int=0) -> Pointer | None:
+        ch_st_addr = self.base_addr + channel_id * self._channel_size
+        ch_ed_addr = self.base_addr + (channel_id + 1) * self._channel_size
+        
+        for addr in range(ch_st_addr, ch_ed_addr - page_size + 1, page_size):
             overlap = self.get_overlapping_data_addr(addr, size=page_size)
             
             if overlap < 0:
@@ -458,11 +468,21 @@ class MemoryHandle:
                 continue
         return None
 
-    def allocate_buffer_ptr(self, page_size: int, n_pages: int, is_circular: bool) -> CircularBufferHandle | BufferHandle | None:
+    def allocate_buffer_ptr(self, page_size: int, n_pages: int, is_circular: bool, channel_id: int | tuple[int]=0) -> CircularBufferHandle | BufferHandle | None:
+        is_channel_sharded = isinstance(channel_id, Sequence)
         page_ptrs = []
 
         for i in range(n_pages):
-            page_ptr = self.allocate_page_ptr(page_size)
+            if is_channel_sharded:
+                # channel_id = i % self._n_channels
+                selected_channel_id = channel_id[i % len(channel_id)]
+            else:
+                selected_channel_id = channel_id
+                
+            if selected_channel_id >= self._n_channels:
+                raise Exception(f"[ERROR] Invalid channel id {selected_channel_id} which exceeds the number of channels {self._n_channels}")
+
+            page_ptr = self.allocate_page_ptr(page_size, channel_id=selected_channel_id)
             if page_ptr is None:
                 self.deallocate_ptr(*page_ptrs)
                 return None
@@ -512,13 +532,13 @@ def create_var_ptr(mem_handle: MemoryHandle, var_size: int, initial_value: Any) 
 def create_page_ptr(mem_handle: MemoryHandle, page_size: int) -> Pointer | None:
     return mem_handle.allocate_page_ptr(page_size)
 
-def create_buffer_ref(mem_handle: MemoryHandle, page_size: int, n_pages: int, is_circular: bool) -> Reference | None:
-    bf_handle = mem_handle.allocate_buffer_ptr(page_size, n_pages, is_circular=is_circular)
+def create_uniform_buffer(mem_handle: MemoryHandle, page_size: int, n_pages: int, is_circular: bool, channel_id: int | Sequence[int]=0) -> Reference | None:
+    bf_handle = mem_handle.allocate_buffer_ptr(page_size, n_pages, is_circular=is_circular, channel_id=channel_id)
     if bf_handle is None:
         return None
     return Reference(handle=bf_handle, item=None)
 
-def create_sharded_buffer_ref(mem_handles: list[MemoryHandle], page_size: int, n_pages: int) -> Reference | None:
+def create_distributed_buffer(mem_handles: list[MemoryHandle], page_size: int, n_pages: int, channel_id: int=0) -> Reference | None:
     n_page_per_handle = math.ceil(n_pages / len(mem_handles))
     page_ptrs = []
     
@@ -526,7 +546,7 @@ def create_sharded_buffer_ref(mem_handles: list[MemoryHandle], page_size: int, n
         for i in range(n_page_per_handle):
             if len(page_ptrs) >= n_pages:
                 break
-            page_ptr = mem_handle.allocate_page_ptr(page_size)
+            page_ptr = mem_handle.allocate_page_ptr(page_size, channel_id=channel_id)
             if page_ptr is None:
                 return None
             page_ptrs.append(page_ptr)
