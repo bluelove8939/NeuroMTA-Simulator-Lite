@@ -3,7 +3,7 @@ import math
 import torch
 
 from neuromta.framework import *
-from neuromta.hardware.multi_tile import *
+from neuromta.hardware import *
 
 from neuromta.hardware.companions.booksim import PYBOOKSIM2_AVAILABLE
 from neuromta.hardware.companions.dramsim import PYDRAMSIM3_AVAILABLE, DRAMSim3Config, create_new_dramsim_config_file

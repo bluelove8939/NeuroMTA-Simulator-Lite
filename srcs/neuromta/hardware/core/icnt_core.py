@@ -2,8 +2,8 @@ import math
 
 from neuromta.framework import *
 
-from neuromta.hardware.multi_tile.context.cmap_context import CmapContext
-from neuromta.hardware.multi_tile.context.icnt_context import IcntContext
+from neuromta.hardware.context.cmap_context import CmapContext
+from neuromta.hardware.context.icnt_context import IcntContext
 
 from neuromta.hardware.companions.booksim import PYBOOKSIM2_AVAILABLE, BookSim2
 

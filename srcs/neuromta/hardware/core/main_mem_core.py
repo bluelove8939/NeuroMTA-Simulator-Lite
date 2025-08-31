@@ -1,7 +1,7 @@
 from neuromta.framework import *
 
-from neuromta.hardware.multi_tile.context.mem_context import MemContext
-from neuromta.hardware.multi_tile.context.cmap_context import CmapContext, CmapCoreType
+from neuromta.hardware.context.mem_context import MemContext
+from neuromta.hardware.context.cmap_context import CmapContext, CmapCoreType
 
 from neuromta.hardware.companions.dramsim import PYDRAMSIM3_AVAILABLE, DRAMSim3
 
