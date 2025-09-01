@@ -17,7 +17,7 @@ def kernel_main(core: NPUCore, main_in_ptr: Reference, l1_ptr: Reference, main_o
         core.async_noc_buffer_read(l1_ptr[0], main_in_ptr[i])
         core.async_rpc_barrier()
          
-        core.async_noc_buffer_write(main_out_ptr[i], l1_ptr[0])
+        core.async_noc_buffer_write(main_out_ptr[i], l1_ptr[0]) 
         core.async_rpc_barrier()
 
 

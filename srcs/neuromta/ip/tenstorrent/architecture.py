@@ -91,12 +91,17 @@ class TenstorrentConfig(dict):
         if PYDRAMSIM3_AVAILABLE:
             dramsim3_config_path    = TENSTORRENT_IP_DRAMSIM_CONFIG_FMT(config_name=config_name)
             dramsim3_channel_size   = main_mem_channel_size // (1024 * 1024)    # GB -> MB
-
+            
             create_new_dramsim_config_file(
-                src_config_path="GDDR5_8Gb_x32.ini",  # TODO: originally, the source config file should be GDDR6_8Gb_x16.ini, but there are some errors ...
+                src_config_path="GDDR6_8Gb_x16.ini",
                 new_config_path=dramsim3_config_path,
-                channel_size=dramsim3_channel_size,
-                n_channel=n_main_mem_channels,
+                system_params={
+                    "channel_size": dramsim3_channel_size,
+                    "channels": n_main_mem_channels,
+                },
+                dram_structure_params={
+                    "bankgroups": 2  # TODO: more authentic way of doing this..?
+                }
             )
             
             dramsim3_config = DRAMSim3Config(

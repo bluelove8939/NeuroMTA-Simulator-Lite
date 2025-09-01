@@ -23,8 +23,10 @@ def create_new_dramsim_config_file(
     src_config_path: str, 
     new_config_path: str,
     
-    channel_size: int,
-    n_channel: int,
+    # channel_size: int,
+    # n_channel: int,
+    system_params: dict[str, int] = None,
+    dram_structure_params: dict[str, int] = None,
 ):
     if not os.path.isfile(src_config_path):
         src_config_path = pydramsim3.PYDRAMSIM_MSYS_CONFIG_PATH(src_config_path)
@@ -36,8 +38,16 @@ def create_new_dramsim_config_file(
     src_config = configparser.ConfigParser()
     src_config.read(src_config_path)
     
-    src_config["system"]["channel_size"] = str(channel_size)
-    src_config["system"]["channels"] = str(n_channel)
+    # src_config["system"]["channel_size"] = str(channel_size)
+    # src_config["system"]["channels"] = str(n_channel)
+    
+    if system_params is not None:
+        for key, value in system_params.items():
+            src_config["system"][key] = str(value)
+    
+    if dram_structure_params is not None:
+        for key, value in dram_structure_params.items():
+            src_config["dram_structure"][key] = str(value)
 
     with open(new_config_path, "w") as new_file:
         src_config.write(new_file)
