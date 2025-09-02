@@ -40,7 +40,7 @@ class IcntCore(Core):
             
             data_req_msg = RPCMessage(
                 src_core_id=self.core_id,
-                dst_core_id=self.cmap_context.config.companion_core_id,
+                dst_core_id=COMPANION_CORE_ID,
                 cmd_id="send_companion_command",
             ).with_args(
                 self.cmap_context.config.booksim_module_id,
@@ -51,7 +51,7 @@ class IcntCore(Core):
             
             data_rsq_msg = RPCMessage(
                 src_core_id=self.core_id,
-                dst_core_id=self.cmap_context.config.companion_core_id,
+                dst_core_id=COMPANION_CORE_ID,
                 cmd_id="send_companion_command",
             ).with_args(
                 self.cmap_context.config.booksim_module_id,
@@ -78,7 +78,7 @@ class IcntCore(Core):
             
             data_req_msg = RPCMessage(
                 src_core_id=self.core_id,
-                dst_core_id=self.cmap_context.config.companion_core_id,
+                dst_core_id=COMPANION_CORE_ID,
                 cmd_id="send_companion_command",
             ).with_args(
                 self.cmap_context.config.booksim_module_id,
@@ -89,7 +89,7 @@ class IcntCore(Core):
             
             data_rsq_msg = RPCMessage(
                 src_core_id=self.core_id,
-                dst_core_id=self.cmap_context.config.companion_core_id,
+                dst_core_id=COMPANION_CORE_ID,
                 cmd_id="send_companion_command",
             ).with_args(
                 self.cmap_context.config.booksim_module_id,

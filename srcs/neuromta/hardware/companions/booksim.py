@@ -17,19 +17,12 @@ __all__ = [
 
 
 class BookSim2Config:
-    def __init__(self, subnets: int, x: int, y: int, xr: int, yr: int, cmd_wait_resolution: int):
+    def __init__(self, subnets: int, x: int, y: int, xr: int, yr: int):
         if not PYBOOKSIM2_AVAILABLE:
             raise RuntimeError("[ERROR] BookSim2 is not available. Please install pybooksim2 to use this module.")
 
         self._config: c_void_p = pybooksim2.create_config_torus_2d(subnets, x, y, xr, yr)
         self._is_registered: bool = False
-        
-        # NOTE: This factor determines how frequent the cycle-level simulator waiting check is. The waiting check 
-        # will be done for every (expected_cmd_cycles / cmd_wait_resolution). This factor is important for balancing 
-        # performance and simulation accuracy. If you want to increase the accuracy of the simulation, you can 
-        # increase this value or simply set this value to None. For example, if expected cmd cycle is 100 and the 
-        # factor is 50, the icnt core will check for every 2 cycles.
-        self.cmd_wait_resolution: int = cmd_wait_resolution
     
     def create_icnt(self) -> c_void_p:
         if self.is_registered:
@@ -80,11 +73,3 @@ class BookSim2(CompanionModule):
         
     def check_command_executed(self, cmd) -> bool:
         return pybooksim2.check_icnt_cmd_received(cmd=cmd)
-    
-    # def get_cmd_wait_check_interval(self, cmd) -> int:
-    #     if self.config.cmd_wait_resolution is None:
-    #         return 1
-        
-    #     cycles = pybooksim2.get_expected_cmd_cycles(cmd=cmd)
-    #     cycles = math.floor(cycles / self.config.cmd_wait_resolution)
-    #     return max(cycles, 1)

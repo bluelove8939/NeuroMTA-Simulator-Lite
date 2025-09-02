@@ -65,7 +65,6 @@ class CmapConfig:
         
         self.icnt_core_id           = ICNT_CORE_NAME
         self.main_mem_core_id       = MAIN_MEM_CORE_NAME
-        self.companion_core_id      = COMPANION_CORE_ID
         
         self.booksim_module_id      = BOOKSIM_MODULE_ID
         self.dramsim_module_id      = DRAMSIM_MODULE_ID 
@@ -121,7 +120,7 @@ class CmapConfig:
             raise ValueError(f"No core of type {core_type} found in the core map.")
         return tuple(map(tuple, coords))
     
-    def create_booksim2_config(self, cmd_wait_resolution: int) -> BookSim2Config:
+    def create_booksim2_config(self) -> BookSim2Config:
         if not PYBOOKSIM2_AVAILABLE:
             return None  # if pybooksim2 is not installed, we cannot create a BookSim2 configuration
 
@@ -134,7 +133,6 @@ class CmapConfig:
             y=y_dim,
             xr=1,   # no concentration by default
             yr=1,   # no concentration by default
-            cmd_wait_resolution=cmd_wait_resolution,
         )
         
     def count_core(self, core_type: CmapCoreType) -> int:

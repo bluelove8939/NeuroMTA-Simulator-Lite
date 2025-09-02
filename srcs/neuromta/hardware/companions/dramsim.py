@@ -58,7 +58,6 @@ class DRAMSim3Config:
         self, 
         config_path: str,  #="GDDR5_8Gb_x32", 
         processor_clock_freq: int,  #=parse_freq_str("1GHz"),
-        cmd_wait_resolution: int
     ):  
         if not os.path.isfile(config_path):
             config_path = pydramsim3.PYDRAMSIM_MSYS_CONFIG_PATH(config_path)
@@ -67,13 +66,6 @@ class DRAMSim3Config:
 
         self.config_path = config_path
         self.processor_clock_freq = processor_clock_freq
-        
-        # NOTE: This factor determines how frequent the cycle-level simulator waiting check is. The waiting check 
-        # will be done for every (expected_cmd_cycles / cmd_wait_resolution). This factor is important for balancing 
-        # performance and simulation accuracy. If you want to increase the accuracy of the simulation, you can 
-        # increase this value or simply set this value to None. For example, if expected cmd cycle is 100 and the 
-        # factor is 50, the icnt core will check for every 2 cycles.
-        self.cmd_wait_resolution = cmd_wait_resolution
 
 
 class DRAMSim3(CompanionModule):

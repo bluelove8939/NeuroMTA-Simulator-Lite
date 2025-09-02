@@ -71,9 +71,7 @@ class TenstorrentConfig(dict):
                 cmap_config.add_core(CmapCoreType.NPU, core_id=(row, 9 + i), mem_bank_idx=(row * 14) + i + 7)
 
         if PYBOOKSIM2_AVAILABLE:
-            booksim2_config = cmap_config.create_booksim2_config(
-                cmd_wait_resolution=50,
-            )
+            booksim2_config = cmap_config.create_booksim2_config()
         else:
             booksim2_config = None
         
@@ -107,7 +105,6 @@ class TenstorrentConfig(dict):
             dramsim3_config = DRAMSim3Config(
                 config_path=dramsim3_config_path,
                 processor_clock_freq=processor_clock_freq,
-                cmd_wait_resolution=5,
             )
         else:
             dramsim3_config = None

@@ -1,8 +1,9 @@
-import abc
+# import abc
 import enum
 import itertools
-import multiprocessing as mp
-import time
+# import multiprocessing as mp
+# import time
+import queue
 from typing import Callable, Sequence, Any
 
 from neuromta.framework.memory_handle import *
@@ -642,10 +643,10 @@ class Core:
         self._suspended_rpc_req_msg: dict[str, RPCMessage] = {}
         self._suspended_rpc_rsp_msg: dict[str, RPCMessage] = {}
 
-        self._rpc_req_recv_queue: mp.Queue = None               # queue to receive RPC request messages
-        self._rpc_rsp_recv_queue: mp.Queue = None               # queue to receive RPC response messages
-        self._rpc_req_send_inbox: dict[str, mp.Queue] = None    # inbox to send RPC request messages (will be initialized by initialize() method)
-        self._rpc_rsp_send_inbox: dict[str, mp.Queue] = None    # inbox to send RPC response messages (will be initialized by initialize() method)
+        self._rpc_req_recv_queue: queue.Queue = None               # queue to receive RPC request messages
+        self._rpc_rsp_recv_queue: queue.Queue = None               # queue to receive RPC response messages
+        self._rpc_req_send_inbox: dict[str, queue.Queue] = None    # inbox to send RPC request messages (will be initialized by initialize() method)
+        self._rpc_rsp_send_inbox: dict[str, queue.Queue] = None    # inbox to send RPC response messages (will be initialized by initialize() method)
         
         self._registered_command_debug_hooks: dict[str, Callable[[Command], None]] = {}
         
@@ -696,7 +697,7 @@ class Core:
         
         return self
     
-    def initialize_mp_queue_inbox(self, rpc_req_send_inbox: dict[str, mp.Queue] = None, rpc_rsp_send_inbox: dict[str, mp.Queue] = None):
+    def initialize_mp_queue_inbox(self, rpc_req_send_inbox: dict[str, queue.Queue] = None, rpc_rsp_send_inbox: dict[str, queue.Queue] = None):
         self._rpc_req_recv_queue = rpc_req_send_inbox[self.core_id]
         self._rpc_rsp_recv_queue = rpc_rsp_send_inbox[self.core_id]
         self._rpc_req_send_inbox = rpc_req_send_inbox
@@ -746,15 +747,14 @@ class Core:
                 remaining_cycles = kernel_remaining_cycles
             elif kernel_remaining_cycles is not None:
                 remaining_cycles = min(remaining_cycles, kernel_remaining_cycles)
-        
-        if remaining_cycles is None:
-            return None
+                
         return remaining_cycles
-        
-    def update_cycle_time(self, cycle_time: int):
+    
+    def rpc_update_routine(self):
         self._rpc_req_kernel_dispatch_routine()  # dispatch RPC kernel if the RPC request queue is not empty
         self._rpc_rsp_msg_receive_routine()      # receive RPC response message and register them as suspended
-
+        
+    def update_cycle_time(self, cycle_time: int):
         main_kernel_names = list(self._dispatched_main_kernels.keys())
         rpc_kernel_names = list(self._dispatched_rpc_kernels.keys())
 
@@ -890,8 +890,6 @@ class Core:
             raise Exception(f"[ERROR] Received message is not a request message: {msg.msg_type}. This exception may caused by the faulty implementation of RPC.")
         
         func = getattr(self, msg.cmd_id, None)
-        # rpc_kernel_id = msg.kernel_id
-        # rpc_root_kernel_id = msg.root_kernel_id
         
         if func is None:
             raise Exception(f"[ERROR] Command '{msg.cmd_id}' is not registered in the core '{self.core_id}' for RPC processing")
@@ -958,11 +956,11 @@ class Core:
         return self._use_functional_model
     
     @property
-    def rpc_req_recv_queue(self) -> mp.Queue:
+    def rpc_req_recv_queue(self) -> queue.Queue:
         return self._rpc_req_recv_queue
 
     @property
-    def rpc_rsp_recv_queue(self) -> mp.Queue:
+    def rpc_rsp_recv_queue(self) -> queue.Queue:
         return self._rpc_rsp_recv_queue
 
     @property

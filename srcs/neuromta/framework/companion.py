@@ -39,20 +39,7 @@ class CompanionModule(metaclass=abc.ABCMeta):
         self._ongoing_cmds.append(cmd)
         
     def retire_executed_commands(self):
-        for i in range(len(self._ongoing_cmds)-1, -1, -1):
-            cmd = self._ongoing_cmds[i]
-            if self.check_command_executed(cmd):
-                self._ongoing_cmds.pop(i)
-    
-    # @property
-    # def is_module_busy_and_all_cmds_not_executed(self) -> bool:
-    #     if len(self._ongoing_cmds) == 0:
-    #         return False
-        
-    #     for cmd in self._ongoing_cmds:
-    #         if self.check_command_executed(cmd):
-    #             return False
-    #     return True
+        self._ongoing_cmds = [cmd for cmd in self._ongoing_cmds if not self.check_command_executed(cmd)]
 
     @property
     def is_busy(self):

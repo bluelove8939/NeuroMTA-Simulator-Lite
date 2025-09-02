@@ -41,7 +41,7 @@ class MainMemoryCore(Core):
         if self.is_dramsim3_enabled:
             msg = RPCMessage(
                 src_core_id=self.core_id,
-                dst_core_id=self.cmap_context.config.companion_core_id,
+                dst_core_id=COMPANION_CORE_ID,
                 cmd_id="send_companion_command",
             ).with_args(
                 self.cmap_context.config.dramsim_module_id,
@@ -58,7 +58,7 @@ class MainMemoryCore(Core):
         if self.is_dramsim3_enabled:
             msg = RPCMessage(
                 src_core_id=self.core_id,
-                dst_core_id=self.cmap_context.config.companion_core_id,
+                dst_core_id=COMPANION_CORE_ID,
                 cmd_id="send_companion_command",
             ).with_args(
                 self.cmap_context.config.dramsim_module_id,
