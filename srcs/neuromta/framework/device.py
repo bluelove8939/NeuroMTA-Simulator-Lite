@@ -1,13 +1,9 @@
 import os
 import sys
-# import time
-# import signal
-# import traceback
 import shutil
-import multiprocessing as mp
 from typing import Sequence, Callable  #, Any
 
-from neuromta.framework.core import Core, Kernel, Command
+from neuromta.framework.core import Core, Kernel, Command, RPCMessage
 from neuromta.framework.companion import CompanionCore
 from neuromta.framework.tracer import Tracer, TraceEntry
 
@@ -28,8 +24,8 @@ class Device:
         self._verbose:      bool = False
         self.create_trace:  bool = False
 
-        self._rpc_req_send_inbox: dict[str, mp.Queue] = {}
-        self._rpc_rsp_send_inbox: dict[str, mp.Queue] = {}
+        self._rpc_req_send_inbox: dict[str, list[RPCMessage]] = {}
+        self._rpc_rsp_send_inbox: dict[str, list[RPCMessage]] = {}
         
         self._companion_core = CompanionCore()
         
@@ -59,8 +55,8 @@ class Device:
             if isinstance(core, (Core, Sequence)):
                 self._register_core(name, core)
 
-        self._rpc_req_send_inbox = {core.core_id: mp.Queue() for core in self._cores.values()}
-        self._rpc_rsp_send_inbox = {core.core_id: mp.Queue() for core in self._cores.values()}
+        self._rpc_req_send_inbox = {core.core_id: [] for core in self._cores.values()}
+        self._rpc_rsp_send_inbox = {core.core_id: [] for core in self._cores.values()}
 
         for core in self._cores.values():
             core.initialize_kernel_dispatch_queue()
@@ -100,7 +96,7 @@ class Device:
 
         self._verbose = verbose
 
-        core_ids: list[str] = list(core_id for core_id in self._cores.keys() if core_id != self.companion_core.core_id)
+        core_ids: list[str] = list(self._cores.keys())
         
         step_cnt = 0
 
@@ -122,23 +118,17 @@ class Device:
                     
             if remaining_cycles == 0 or remaining_cycles is None:
                 remaining_cycles = self.companion_core.update_cycle_time_until_cmd_executed()
-                
+                    
                 if remaining_cycles == 0 or remaining_cycles is None:
                     remaining_cycles = cycle_resolution
-                    self.companion_core.update_cycle_time(cycle_time=remaining_cycles)
             else:
-                self.companion_core.update_cycle_time(cycle_time=remaining_cycles)
+                self.companion_core.update_cycle_time_companion_modules(cycle_time=remaining_cycles)
 
             for core_id in core_ids:
                 self._cores[core_id].update_cycle_time(cycle_time=remaining_cycles)
-            
-            for core_id in core_ids:
-                self._cores[core_id]._rpc_req_kernel_dispatch_routine()
-            self.companion_core._rpc_req_kernel_dispatch_routine()
                 
             for core_id in core_ids:
-                self._cores[core_id]._rpc_rsp_msg_receive_routine()
-            self.companion_core._rpc_rsp_msg_receive_routine()
+                self._cores[core_id].rpc_update_routine()
                 
         if save_trace:
             for core_id, tracer in tracers.items():

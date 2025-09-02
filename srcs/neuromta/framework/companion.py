@@ -66,9 +66,10 @@ class CompanionCore(Core):
     def get_companion_module(self, module_id: str) -> CompanionModule:
         return self._companion_modules.get(module_id, None)
     
-    def update_cycle_time(self, cycle_time):
-        super().update_cycle_time(cycle_time)
-        
+    # def update_cycle_time(self, cycle_time):
+    #     super().update_cycle_time(cycle_time)
+
+    def update_cycle_time_companion_modules(self, cycle_time: int):
         for cmod in self._companion_modules.values():
             cmod.update_cycle_time(cycle_time=cycle_time)
             
@@ -85,7 +86,7 @@ class CompanionCore(Core):
             if any(cmod.has_executed_ongoing_cmd for cmod in self._companion_modules.values()):
                 break
 
-            self.update_cycle_time(1)
+            self.update_cycle_time_companion_modules(1)
             cycle_time += 1
 
         for cmod in self._companion_modules.values():
