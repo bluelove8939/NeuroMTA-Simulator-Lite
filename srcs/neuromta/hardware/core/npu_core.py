@@ -162,10 +162,8 @@ class NPUCore(Core):
         src_owner_id = self.cmap_context.get_coord_from_address(src_ptr.addr, hash_src_coord=self.coord)  # the number of destination can be more than 1 -> use hashing with the current coordinate
 
         noc_trans_msg = RPCMessage(
-            msg_type=0,
             src_core_id=self.core_id,
             dst_core_id=icnt_core_id,
-            kernel_id=get_global_kernel_context().kernel_id,
             cmd_id="noc_create_data_read_transaction"
         ).with_args(
             src_coord=src_owner_id,
@@ -174,10 +172,8 @@ class NPUCore(Core):
         )
         
         mem_reader_msg = RPCMessage(
-            msg_type=0,
             src_core_id=self.core_id,   # source of the RPC message will be myself
             dst_core_id=src_owner_id,   # destination of the RPC message will be owner of the source pointer,
-            kernel_id=get_global_kernel_context().kernel_id,
             cmd_id="mem_store_page_to_container",
         ).with_args(
             ptr=src_ptr,
@@ -212,10 +208,8 @@ class NPUCore(Core):
         dst_owner_id = self.cmap_context.get_coord_from_address(dst_ptr.addr, hash_src_coord=self.coord)  # the number of destination can be more than 1 -> use hashing with the current coordinate
         
         noc_trans_msg = RPCMessage(
-            msg_type=0,
             src_core_id=self.core_id,
             dst_core_id=icnt_core_id,
-            kernel_id=get_global_kernel_context().kernel_id,
             cmd_id="noc_create_data_write_transaction"
         ).with_args(
             src_coord=src_owner_id,
@@ -224,10 +218,8 @@ class NPUCore(Core):
         )
         
         mem_writer_msg = RPCMessage(
-            msg_type=0,
             src_core_id=self.core_id,   # source of the RPC message will be myself
             dst_core_id=dst_owner_id,   # destination of the RPC message will be owner of the source pointer,
-            kernel_id=get_global_kernel_context().kernel_id,
             cmd_id="mem_load_page_from_container",
         ).with_args(
             ptr=dst_ptr,

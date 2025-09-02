@@ -32,54 +32,56 @@ class MainMemoryCore(Core):
             n_channels=self.cmap_context.config.n_main_mem_channels
         )
         
-        if self.mem_context.main_config.dramsim3_enable and PYDRAMSIM3_AVAILABLE:
-            self.dramsim3_module = DRAMSim3(config=self.mem_context.main_config.dramsim3_config)
-            self.register_companion_module("DRAMSIM3", self.dramsim3_module)
-        else:
-            self.dramsim3_module = None
+        # if self.mem_context.main_config.dramsim3_enable and PYDRAMSIM3_AVAILABLE:
+        #     self.dramsim3_module = DRAMSim3(config=self.mem_context.main_config.dramsim3_config)
+        #     self.register_companion_module("DRAMSIM3", self.dramsim3_module)
+        # else:
+        #     self.dramsim3_module = None
             
     #############################################################
     # Data Container (NoC Interface)
     #############################################################
     
+    @property
+    def is_dramsim3_enabled(self) -> bool:
+        return PYDRAMSIM3_AVAILABLE and self.mem_context.main_config.dramsim3_enable
+    
     @core_kernel_method
-    def mem_load_page_from_container(self, ptr: Pointer, container: DataContainer):
+    def mem_load_page(self, ptr: Pointer, container: DataContainer):
         if self.is_dramsim3_enabled:
             msg = RPCMessage(
-                msg_type=0,
                 src_core_id=self.core_id,
-                dst_core_id=self.cmap_context.main_mem_core_id,
-                kernel_id=get_global_kernel_context().kernel_id,
-                cmd_id="dramsim_mem_load_page",
+                dst_core_id=self.cmap_context.config.companion_core_id,
+                cmd_id="send_companion_command",
             ).with_args(
-                ptr=ptr
+                self.cmap_context.config.dramsim_module_id,
+                addr=ptr.addr, size=ptr.size, is_write=False,
             )
             
             self.async_rpc_send_req_msg(msg)
             self.async_rpc_wait_rsp_msg(msg)
-
-        self._static_mem_load_page_from_container(ptr, container)
+            
+        self._static_load_page(ptr, container)
         
     @core_kernel_method
-    def mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
+    def mem_store_page(self, ptr: Pointer, container: DataContainer):
         if self.is_dramsim3_enabled:
             msg = RPCMessage(
-                msg_type=0,
                 src_core_id=self.core_id,
-                dst_core_id=self.cmap_context.main_mem_core_id,
-                kernel_id=get_global_kernel_context().kernel_id,
-                cmd_id="dramsim_mem_store_page",
+                dst_core_id=self.cmap_context.config.companion_core_id,
+                cmd_id="send_companion_command",
             ).with_args(
-                ptr=ptr
+                self.cmap_context.config.dramsim_module_id,
+                addr=ptr.addr, size=ptr.size, is_write=True,
             )
             
             self.async_rpc_send_req_msg(msg)
             self.async_rpc_wait_rsp_msg(msg)
-
-        self._static_mem_store_page_to_container(ptr, container)
+            
+        self._static_store_page(ptr, container)
 
     @core_command_method
-    def _static_mem_load_page_from_container(self, ptr: Pointer, container: DataContainer):
+    def _static_load_page(self, ptr: Pointer, container: DataContainer):
         if ptr.ptr_type != PointerType.PAGE:
             raise ValueError("[ERROR] Memory copy requires page pointer.")
 
@@ -90,7 +92,7 @@ class MainMemoryCore(Core):
         page_elem.content = container.data
 
     @core_command_method
-    def _static_mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
+    def _static_store_page(self, ptr: Pointer, container: DataContainer):
         if ptr.ptr_type != PointerType.PAGE:
             raise ValueError("[ERROR] Memory copy requires page pointer.")
 
@@ -104,29 +106,15 @@ class MainMemoryCore(Core):
     # DRAMSim3 Commands
     #############################################################  
     
-    @property
-    def is_dramsim3_enabled(self) -> bool:
-        return PYDRAMSIM3_AVAILABLE and self.mem_context.main_config.dramsim3_enable
-            
-    @core_conditional_command_method
-    def dramsim_send_mem_cmd(self, cmd):
-        return self.dramsim3_module.dispatch_cmd(cmd)
-        
-    @core_conditional_command_method
-    def dramsim_wait_mem_cmd(self, cmd):
-        return self.dramsim3_module.check_cmd_executed(cmd)
     
-    @core_kernel_method
-    def dramsim_mem_load_page(self, ptr: Pointer):
-        cmd = self.dramsim3_module.create_cmd(addr=ptr.addr, size=ptr.size, is_write=True)
-        self.dramsim_send_mem_cmd(cmd)
-        self.dramsim_wait_mem_cmd(cmd)
+    
+    # @core_kernel_method
+    # def dramsim_mem_load_page(self, ptr: Pointer):
+       
         
-    @core_kernel_method
-    def dramsim_mem_store_page(self, ptr: Pointer):
-        cmd = self.dramsim3_module.create_cmd(addr=ptr.addr, size=ptr.size, is_write=False)
-        self.dramsim_send_mem_cmd(cmd)
-        self.dramsim_wait_mem_cmd(cmd)
+    # @core_kernel_method
+    # def dramsim_mem_store_page(self, ptr: Pointer):
+        
         
 class MainMemoryCoreCycleModel(CoreCycleModel):
     def __init__(self, core: MainMemoryCore):
@@ -134,12 +122,12 @@ class MainMemoryCoreCycleModel(CoreCycleModel):
         
         self.core = core
         
-    def _static_mem_load_page_from_container(self, ptr: Pointer, container: DataContainer):
+    def _static_load_page(self, ptr: Pointer, container: DataContainer):
         if self.core.is_dramsim3_enabled:
             return 1    # if DRAMSim is enabled, simulation time will be reflected at the behavioral model
         return self.core.mem_context.main_config.get_cycles(size=ptr.size)
 
-    def _static_mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
+    def _static_store_page(self, ptr: Pointer, container: DataContainer):
         if self.core.is_dramsim3_enabled:
             return 1    # if DRAMSim is enabled, simulation time will be reflected at the behavioral model
         return self.core.mem_context.main_config.get_cycles(size=ptr.size)

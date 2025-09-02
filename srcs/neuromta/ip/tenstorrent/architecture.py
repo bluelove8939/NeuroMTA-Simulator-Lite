@@ -63,12 +63,12 @@ class TenstorrentConfig(dict):
         for row in range(12):
             ch_row = row // n_dma_core_per_channel   # the channel ID of the given row
 
-            cmap_config.add_core(CmapCoreType.DMA, coord=(row, 0), mem_bank_idx=ch_row * 2)         # DMA cores that are located at 3 consecutive row will be assigned the same memory channel
-            cmap_config.add_core(CmapCoreType.DMA, coord=(row, 8), mem_bank_idx=ch_row * 2 + 1)     # DMA cores that are located at 3 consecutive row will be assigned the same memory channel
+            cmap_config.add_core(CmapCoreType.DMA, core_id=(row, 0), mem_bank_idx=ch_row * 2)         # DMA cores that are located at 3 consecutive row will be assigned the same memory channel
+            cmap_config.add_core(CmapCoreType.DMA, core_id=(row, 8), mem_bank_idx=ch_row * 2 + 1)     # DMA cores that are located at 3 consecutive row will be assigned the same memory channel
 
             for i in range(7):
-                cmap_config.add_core(CmapCoreType.NPU, coord=(row, 1 + i), mem_bank_idx=(row * 14) + i)
-                cmap_config.add_core(CmapCoreType.NPU, coord=(row, 9 + i), mem_bank_idx=(row * 14) + i + 7)
+                cmap_config.add_core(CmapCoreType.NPU, core_id=(row, 1 + i), mem_bank_idx=(row * 14) + i)
+                cmap_config.add_core(CmapCoreType.NPU, core_id=(row, 9 + i), mem_bank_idx=(row * 14) + i + 7)
 
         if PYBOOKSIM2_AVAILABLE:
             booksim2_config = cmap_config.create_booksim2_config(

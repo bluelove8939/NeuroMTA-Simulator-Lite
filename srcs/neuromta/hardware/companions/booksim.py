@@ -66,22 +66,25 @@ class BookSim2(CompanionModule):
     def update_cycle_time(self, cycle_time):
         pybooksim2.icnt_cycle_step(icnt=self._icnt, cycles=cycle_time)
         
-    def create_data_cmd(self, src_id: int, dst_id: int, subnet: int, size: int, is_write: bool, is_response: bool):
-        return pybooksim2.create_icnt_cmd_data_packet(src_id, dst_id, subnet, size, is_write, is_response)
+    # def create_data_cmd(self, src_id: int, dst_id: int, subnet: int, size: int, is_write: bool, is_response: bool):
+    #     return pybooksim2.create_icnt_cmd_data_packet(src_id, dst_id, subnet, size, is_write, is_response)
 
-    def create_control_cmd(self, src_id: int, dst_id: int, subnet: int, size: int, is_response: bool):
-        return pybooksim2.create_icnt_cmd_control_packet(src_id, dst_id, subnet, size, is_response)
+    # def create_control_cmd(self, src_id: int, dst_id: int, subnet: int, size: int, is_response: bool):
+    #     return pybooksim2.create_icnt_cmd_control_packet(src_id, dst_id, subnet, size, is_response)
 
-    def dispatch_cmd(self, cmd):
+    def create_command(self, src_id: int, dst_id: int, subnet: int, n_flits: int, is_write: bool, is_response: bool):
+        return pybooksim2.create_icnt_cmd_data_packet(src_id, dst_id, subnet, n_flits, is_write, is_response)
+    
+    def dispatch_command(self, cmd):
         return pybooksim2.icnt_dispatch_cmd(icnt=self._icnt, cmd=cmd)
         
-    def check_cmd_executed(self, cmd) -> bool:
+    def check_command_executed(self, cmd) -> bool:
         return pybooksim2.check_icnt_cmd_received(cmd=cmd)
     
-    def get_cmd_wait_check_interval(self, cmd) -> int:
-        if self.config.cmd_wait_resolution is None:
-            return 1
+    # def get_cmd_wait_check_interval(self, cmd) -> int:
+    #     if self.config.cmd_wait_resolution is None:
+    #         return 1
         
-        cycles = pybooksim2.get_expected_cmd_cycles(cmd=cmd)
-        cycles = math.floor(cycles / self.config.cmd_wait_resolution)
-        return max(cycles, 1)
+    #     cycles = pybooksim2.get_expected_cmd_cycles(cmd=cmd)
+    #     cycles = math.floor(cycles / self.config.cmd_wait_resolution)
+    #     return max(cycles, 1)

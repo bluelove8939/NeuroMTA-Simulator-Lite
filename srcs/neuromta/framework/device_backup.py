@@ -126,7 +126,13 @@ class SingleCoreProcess(mp.Process):
             core_id_str_expr = TraceEntry.convert_valid_core_id(self.core.core_id)
             trace_path = os.path.join(self.save_trace_dir, f"{core_id_str_expr}.csv")
             self.tracer.save_traces_as_file(trace_path)
-
+            
+            sim_time_us = 0
+            for entry in self.tracer._trace_entries:
+                sim_time_us += entry.sim_time_us
+            
+            elapsed_time_us = (time.time() - self._st_time) * 1000000
+            print(f"[DEBUG] Time analysis for core {self.core.core_id} - elapsed {elapsed_time_us:.2f}us - simulated {sim_time_us:.2f}us - overhead {elapsed_time_us - sim_time_us:.2f}us ({(elapsed_time_us - sim_time_us) / elapsed_time_us * 100:.2f}%)")
             print(f"[INFO] Trace for core {self.core.core_id} saved to \"{trace_path}\"")
         
         os._exit(143)  # 128 + 15
@@ -149,7 +155,10 @@ class SingleCoreProcess(mp.Process):
         while True:
             # STEP 1: Send timestamp update request based on the remaining cycles of the core
             try:
-                remaining_cycles = self.core.get_remaining_cycles()
+                if update_companion_flag:
+                    remaining_cycles = self.core.update_cycle_time_until_cmd_executed()
+                else:
+                    remaining_cycles = self.core.get_remaining_cycles()
             except Exception as e:
                 print(f"[ERROR] Failed to get remaining cycles for core {self.core.core_id}: {e}")
                 print(traceback.format_exc())
@@ -198,6 +207,12 @@ class SingleCoreProcess(mp.Process):
                     print(f"[ERROR] Exception occurred in core {self.core.core_id}: {e}")
                     print(traceback.format_exc())
                     is_exception_caught = True
+            elif device_sig == _InternalDeviceCoreSignal.UPDATE_TIME_COMPANION_ONLY_REQ:
+                if not isinstance(self.core, CompanionCore):
+                    print(f"[ERROR] Unexpected core type for UPDATE_TIME_COMPANION_ONLY_REQ: {type(self.core)}")
+                    is_exception_caught = True
+                else:
+                    update_companion_flag = True
             else:
                 print(f"[ERROR] Unexpected device signal: {device_sig}")
                 is_exception_caught = True
@@ -222,7 +237,7 @@ class SingleCoreProcess(mp.Process):
 
 class Device:
     def __init__(self):
-        self._cores: dict[str, Core] = None
+        self._cores:        dict[str, Core] = None
         
         self._verbose:      bool = False
         self.create_trace:  bool = False
@@ -272,7 +287,7 @@ class Device:
     
     def default_command_debug_hook(self, core: Core, kernel: Kernel, cmd: Command, issue_time: int, commit_time: int):
         if self._verbose:
-            sys.stdout.write(f"[DEBUG] {issue_time:<4d} - {commit_time:<4d} | {core.core_id.__str__():<10s} | {kernel.kernel_id_full:<130s} | command: {cmd.cmd_id}\n")
+            sys.stdout.write(f"[DEBUG] {issue_time:<4d} - {commit_time:<4d} | core: {core.core_id.__str__():<8s} | kernel: {kernel.kernel_id:<40s} | command: {cmd.cmd_id:<45s}\n")
 
     def run_kernels(
         self, 
@@ -287,7 +302,7 @@ class Device:
         
         self._verbose = verbose
 
-        core_ids:                   list[str]                       = list(core_id for core_id in self._cores.keys() if core_id != self.companion_core.core_id)
+        core_ids:                   list[str]                       = list(self._cores.keys())
         core_process_dict:          dict[str, SingleCoreProcess]    = {}
         core_to_device_sig_queue:   mp.Queue                        = mp.Queue()
         device_to_core_sig_q_dict:  dict[str, mp.Queue]             = {core_id: mp.Queue() for core_id in core_ids}
@@ -299,9 +314,6 @@ class Device:
             if os.path.isdir(save_trace_dir):
                 shutil.rmtree(save_trace_dir)  # Remove existing directory
             os.makedirs(save_trace_dir, exist_ok=True)
-            
-            companion_tracer = Tracer()
-            companion_tracer.register_core(self.companion_core)
 
         for core_id in core_ids:
             core = self._cores[core_id]
@@ -354,16 +366,36 @@ class Device:
             if all(main_idle_flags.values()):
                 break
             
+            update_response_except_companion_core = False
+            
             if remaining_cycles_min == 0 or remaining_cycles_min is None:
-                remaining_cycles_min = self.companion_core.update_cycle_time_until_cmd_executed()
+                # remaining_cycles_min = cycle_resolution
+                
+                device_sig = _InternalDeviceCoreSignal(
+                    sig_id=_InternalDeviceCoreSignal.UPDATE_TIME_COMPANION_ONLY_REQ,
+                    core_id=self.companion_core.core_id,
+                    payload=None
+                )
+                
+                device_to_core_sig_q_dict[self.companion_core.core_id].put(device_sig)
+                
+                sig = core_to_device_sig_queue.get()
+                
+                if sig == _InternalDeviceCoreSignal.UPDATE_TIME_REQ:
+                    remaining_cycles_min = sig.payload
+                elif sig == _InternalDeviceCoreSignal.EXCEPTION:
+                    print(f"Exception occurred on evaluating")
+                    break
                 
                 if remaining_cycles_min == 0 or remaining_cycles_min is None:
                     remaining_cycles_min = cycle_resolution
-                    self.companion_core.update_cycle_time(cycle_time=remaining_cycles_min)
-            else:
-                self.companion_core.update_cycle_time(cycle_time=remaining_cycles_min)
+                    
+                update_response_except_companion_core = True
 
             for core_id, q in device_to_core_sig_q_dict.items():
+                if update_response_except_companion_core and core_id == self.companion_core.core_id:
+                    continue
+                
                 device_sig = _InternalDeviceCoreSignal(
                     sig_id=_InternalDeviceCoreSignal.UPDATE_TIME_RSP,
                     core_id=core_id,
@@ -405,14 +437,6 @@ class Device:
                 
         for p in core_process_dict.values():
             p.join(timeout=0.1)
-            
-        if save_trace:
-            if not companion_tracer.is_empty:
-                core_id_str_expr = TraceEntry.convert_valid_core_id(self.companion_core.core_id)
-                trace_path = os.path.join(save_trace_dir, f"{core_id_str_expr}.csv")
-                companion_tracer.save_traces_as_file(trace_path)
-
-                print(f"[INFO] Trace for core {self.companion_core.core_id} saved to \"{trace_path}\"")
 
     def register_command_debug_hook(self, hook: Callable):
         if not self.is_initialized:

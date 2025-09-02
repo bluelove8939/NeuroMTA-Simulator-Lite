@@ -14,6 +14,9 @@ from neuromta.hardware.core.dma_core import *
 from neuromta.hardware.core.icnt_core import *
 from neuromta.hardware.core.main_mem_core import *
 
+from neuromta.hardware.companions.booksim import BookSim2
+from neuromta.hardware.companions.dramsim import DRAMSim3
+
 
 __all__ = [
     "MTAccelerator"
@@ -57,6 +60,18 @@ class MTAccelerator(Device):
         
         self.icnt_core = IcntCore(cmap_context=self.cmap_context, icnt_context=self.icnt_context)
         self.main_mem_core = MainMemoryCore(mem_context=self.mem_context, cmap_context=self.cmap_context)
+        
+        if self.icnt_context.booksim2_enable:
+            self.companion_core.register_companion_module(
+                self.cmap_context.config.booksim_module_id,
+                module=BookSim2(config=self.icnt_context.booksim2_config)
+            )
+        
+        if self.mem_context.main_config.dramsim3_enable:
+            self.companion_core.register_companion_module(
+                self.cmap_context.config.dramsim_module_id,
+                module=DRAMSim3(config=self.mem_context.main_config.dramsim3_config)
+            )
         
     def get_core_from_coord(self, coord: tuple[int, int]) -> NPUCore | DMACore:
         if coord in self.npu_coord_to_core_idx_mappings:
@@ -122,7 +137,7 @@ class MTAccelerator(Device):
 
     def create_sharded_l1_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference:
         if coords is None:
-            coords = self.cmap_context.config.core_coord(CmapCoreType.NPU)
+            coords = self.cmap_context.config.get_core_ids(CmapCoreType.NPU)
         if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
             coords = [coords]
 

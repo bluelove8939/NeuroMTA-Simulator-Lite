@@ -99,22 +99,22 @@ class DRAMSim3(CompanionModule):
         
         pydramsim3.msys_cycle_step(msys=self._msys, cycles=mem_cycles)
 
-    def create_cmd(self, addr: int, size: int, is_write: bool):
+    def create_command(self, addr: int, size: int, is_write: bool):
         return pydramsim3.create_msys_cmd(addr=addr, size=size, is_write=is_write)
-    
-    def dispatch_cmd(self, cmd) -> bool:
+
+    def dispatch_command(self, cmd) -> bool:
         return pydramsim3.msys_dispatch_cmd(msys=self._msys, cmd=cmd)
         
-    def check_cmd_executed(self, cmd) -> bool:
+    def check_command_executed(self, cmd) -> bool:
         return pydramsim3.check_msys_cmd_executed(cmd=cmd)
     
-    def get_cmd_wait_check_interval(self, cmd) -> int:
-        if self.config.cmd_wait_resolution is None:
-            return 1
+    # def get_cmd_wait_check_interval(self, cmd) -> int:
+    #     if self.config.cmd_wait_resolution is None:
+    #         return 1
 
-        mem_to_ref_clock_ratio = self._mem_clock_time / self._ref_clock_time
+    #     mem_to_ref_clock_ratio = self._mem_clock_time / self._ref_clock_time
 
-        cycles = pydramsim3.get_expected_cmd_cycles(msys=self._msys, cmd=cmd)
-        cycles *= mem_to_ref_clock_ratio
-        cycles = math.floor(cycles / self.config.cmd_wait_resolution)
-        return max(cycles, 1)
+    #     cycles = pydramsim3.get_expected_cmd_cycles(msys=self._msys, cmd=cmd)
+    #     cycles *= mem_to_ref_clock_ratio
+    #     cycles = math.floor(cycles / self.config.cmd_wait_resolution)
+    #     return max(cycles, 1)

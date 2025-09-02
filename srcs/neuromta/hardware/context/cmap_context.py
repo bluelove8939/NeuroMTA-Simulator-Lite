@@ -1,5 +1,5 @@
-import torch
 import enum
+from typing import Any
 
 from neuromta.framework import *
 from neuromta.hardware.companions.booksim import BookSim2Config, PYBOOKSIM2_AVAILABLE
@@ -15,12 +15,18 @@ __all__ = [
 
 ICNT_CORE_NAME      = "ICNT"
 MAIN_MEM_CORE_NAME  = "MAIN_MEM"
+BOOKSIM_MODULE_ID   = "BOOKSIM"
+DRAMSIM_MODULE_ID   = "DRAMSIM"
 
 
 class CmapCoreType(enum.Enum):
-    EMPTY   = enum.auto()
     NPU     = enum.auto()
     DMA     = enum.auto()
+    CACHE   = enum.auto()
+    
+    @property
+    def is_memory_space_owner(self) -> bool:
+        return self in (CmapCoreType.NPU, CmapCoreType.DMA)
 
 
 class CmapMemType(enum.Enum):
@@ -33,10 +39,10 @@ class AddressSpaceEntry:
         self.mem_type = mem_type
         self.size = size
         
-        self.coords: list[tuple[int, int]] = []
+        self.core_ids: list[tuple[int, int]] = []
         
-    def add_coord(self, coord: tuple[int, int]):
-        self.coords.append(coord)
+    def add_core_id(self, coord: tuple[int, int]):
+        self.core_ids.append(coord)
 
 
 class CmapConfig:
@@ -59,40 +65,57 @@ class CmapConfig:
         
         self.icnt_core_id           = ICNT_CORE_NAME
         self.main_mem_core_id       = MAIN_MEM_CORE_NAME
+        self.companion_core_id      = COMPANION_CORE_ID
         
-        self.core_map: dict[tuple[int, int], CmapCoreType] = {}
+        self.booksim_module_id      = BOOKSIM_MODULE_ID
+        self.dramsim_module_id      = DRAMSIM_MODULE_ID 
+        
+        self.core_map: dict[Any, CmapCoreType] = {}
         self.addr_space: dict[int, AddressSpaceEntry] = {}
 
         self.main_mem_base_addr = 0x00000000
         self.l1_mem_base_addr = self.main_mem_base_addr + self.n_main_mem_channels * self.main_mem_channel_size
-
-    def add_core(self, core_type: CmapCoreType, coord: tuple[int, int], mem_bank_idx: int):
-        if not (0 <= coord[0] < self.shape[0]) or not (0 <= coord[1] < self.shape[1]):
-            raise ValueError(f"Coordinate {coord} is out of bounds for core map shape {self.shape}.")
-        if coord in self.core_map.keys():
-            raise ValueError(f"Coordinate {coord} is already assigned to a core.")
         
-        if core_type == CmapCoreType.DMA:
-            mem_type=CmapMemType.MAIN
-            base_addr=self.main_mem_base_addr + mem_bank_idx * self.main_mem_channel_size
-            size=self.main_mem_channel_size
-        elif core_type == CmapCoreType.NPU:    
-            mem_type=CmapMemType.L1
-            base_addr=self.l1_mem_base_addr + mem_bank_idx * self.l1_mem_bank_size
-            size=self.l1_mem_bank_size
+        for i in range(self.n_main_mem_channels):
+            base_addr = self.main_mem_base_addr + i * self.main_mem_channel_size
+            self.addr_space[base_addr] = AddressSpaceEntry(mem_type=CmapMemType.MAIN, size=self.main_mem_channel_size)
+        
+        for i in range(self.n_l1_mem_bank):
+            base_addr = self.l1_mem_base_addr + i * self.l1_mem_bank_size
+            self.addr_space[base_addr] = AddressSpaceEntry(mem_type=CmapMemType.L1, size=self.l1_mem_bank_size)
 
-        if base_addr not in self.addr_space.keys():
-            addr_space_entry = AddressSpaceEntry(mem_type=mem_type, size=size)
-            self.addr_space[base_addr] = addr_space_entry
-        else:
+    def add_core(self, core_type: CmapCoreType, core_id: Any, mem_bank_idx: int=None):
+        if not (0 <= core_id[0] < self.shape[0]) or not (0 <= core_id[1] < self.shape[1]):
+            raise ValueError(f"Coordinate {core_id} is out of bounds for core map shape {self.shape}.")
+        if core_id in self.core_map.keys():
+            raise ValueError(f"Coordinate {core_id} is already assigned to a core.")
+
+        self.core_map[core_id] = core_type
+
+        if core_type.is_memory_space_owner:
+            if mem_bank_idx is None:
+                raise Exception(f"[ERROR] Memory bank index is required for {core_type}.")
+
+            if core_type == CmapCoreType.DMA:
+                mem_type=CmapMemType.MAIN
+                base_addr=self.main_mem_base_addr + mem_bank_idx * self.main_mem_channel_size
+                size=self.main_mem_channel_size
+            elif core_type == CmapCoreType.NPU:    
+                mem_type=CmapMemType.L1
+                base_addr=self.l1_mem_base_addr + mem_bank_idx * self.l1_mem_bank_size
+                size=self.l1_mem_bank_size
+
+            if base_addr not in self.addr_space.keys():
+                raise Exception(f"[ERROR] Address {base_addr} is not mapped in the address space.")
+            
             addr_space_entry = self.addr_space[base_addr]
+            
             if addr_space_entry.mem_type != mem_type or addr_space_entry.size != size:
-                raise ValueError(f"Address {hex(base_addr)} is already assigned to a different memory type.")
+                raise ValueError(f"Address {base_addr} is already assigned to a different memory type.")
+            
+            addr_space_entry.core_ids.append(core_id)
 
-        self.core_map[coord] = core_type
-        addr_space_entry.coords.append(coord)
-
-    def core_coord(self, core_type: CmapCoreType) -> tuple[tuple[int, int]]:
+    def get_core_ids(self, core_type: CmapCoreType) -> tuple:
         coords = [coord for coord, ctype in self.core_map.items() if ctype == core_type]
         if not coords:
             raise ValueError(f"No core of type {core_type} found in the core map.")
@@ -115,7 +138,7 @@ class CmapConfig:
         )
         
     def count_core(self, core_type: CmapCoreType) -> int:
-        return sum(1 for ctype in self.coord_core_map.values() if ctype == core_type)
+        return sum(1 for ctype in self.core_map.values() if ctype == core_type)
     
     def check_main_mem_addr(self, addr: int) -> bool:
         return self.main_mem_base_addr <= addr < self.l1_mem_base_addr
@@ -143,13 +166,13 @@ class CmapContext:
         self._coord_to_base_addr_mappings:  dict[tuple[int, int], int] = {}
         self._coord_to_main_ch_id_mappings: dict[tuple[int, int], int] = {}
         
-        self._npu_core_coords: tuple[tuple[int, int]] = self.config.core_coord(CmapCoreType.NPU)
-        self._dma_core_coords: tuple[tuple[int, int]] = self.config.core_coord(CmapCoreType.DMA)
+        self._npu_core_coords: tuple[tuple[int, int]] = self.config.get_core_ids(CmapCoreType.NPU)
+        self._dma_core_coords: tuple[tuple[int, int]] = self.config.get_core_ids(CmapCoreType.DMA)
         
         for base_addr, addr_space_entry in self.config.addr_space.items():
             size = addr_space_entry.size
 
-            for coord in addr_space_entry.coords:
+            for coord in addr_space_entry.core_ids:
                 self._base_addr_to_coord_mappings[base_addr] = (coord, size)
                 self._coord_to_base_addr_mappings[coord] = base_addr
                 
@@ -171,7 +194,7 @@ class CmapContext:
             
             addr_space_entry = self.config.addr_space[base_addr]
             size = addr_space_entry.size
-            coords = addr_space_entry.coords
+            coords = addr_space_entry.core_ids
 
             if base_addr <= addr < (base_addr + size):
                 if hash_src_coord is None:

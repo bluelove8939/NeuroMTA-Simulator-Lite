@@ -29,11 +29,9 @@ class DMACore(Core):
     @core_kernel_method
     def mem_load_page_from_container(self, ptr: Pointer, container: DataContainer):
         msg = RPCMessage(
-            msg_type=0,
             src_core_id=self.core_id,
             dst_core_id=self.cmap_context.main_mem_core_id,
-            kernel_id=get_global_kernel_context().kernel_id,
-            cmd_id="mem_load_page_from_container"
+            cmd_id="mem_load_page"
         ).with_args(
             ptr=ptr,
             container=container
@@ -45,11 +43,9 @@ class DMACore(Core):
     @core_kernel_method
     def mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
         msg = RPCMessage(
-            msg_type=0,
             src_core_id=self.core_id,
             dst_core_id=self.cmap_context.main_mem_core_id,
-            kernel_id=get_global_kernel_context().kernel_id,
-            cmd_id="mem_store_page_to_container"
+            cmd_id="mem_store_page"
         ).with_args(
             ptr=ptr,
             container=container
