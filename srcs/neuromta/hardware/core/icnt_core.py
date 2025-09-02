@@ -26,14 +26,6 @@ class IcntCore(Core):
         
         self.icnt_context = icnt_context
         self.cmap_context = cmap_context
-        
-        # if self.is_booksim2_enabled:
-        #     self.booksim2_module = BookSim2(config=self.icnt_context.booksim2_config)
-        #     self.register_companion_module("BOOKSIM2", self.booksim2_module)
-    
-    #############################################################
-    # NoC Commands
-    #############################################################
     
     @property
     def is_booksim2_enabled(self) -> bool:
@@ -44,16 +36,7 @@ class IcntCore(Core):
         if self.is_booksim2_enabled:
             src_id = self.cmap_context.get_node_id_from_coord(src_coord)
             dst_id = self.cmap_context.get_node_id_from_coord(dst_coord)
-            # self.booksim_create_data_read_transaction(src_id, dst_id, data_size)
-            
             n_flits = math.ceil(data_size / self.icnt_context.flit_size)
-            # req_cmd = self.booksim2_module.create_data_cmd(src_id, dst_id, 0, n_flits, is_write=False, is_response=False)  # TODO: subnet index 
-            # self.booksim_send_packet_with_cmd(req_cmd)
-            # self.booksim_wait_cmd_and_handle(req_cmd)
-            
-            # rsp_cmd = self.booksim2_module.create_data_cmd(dst_id, src_id, 0, n_flits, is_write=False, is_response=True)   # TODO: subnet index 
-            # self.booksim_send_packet_with_cmd(rsp_cmd)
-            # self.booksim_wait_cmd_and_handle(rsp_cmd)
             
             data_req_msg = RPCMessage(
                 src_core_id=self.core_id,
@@ -91,17 +74,7 @@ class IcntCore(Core):
         if self.is_booksim2_enabled:
             src_id = self.cmap_context.get_node_id_from_coord(src_coord)
             dst_id = self.cmap_context.get_node_id_from_coord(dst_coord)
-            # self.booksim_create_data_write_transaction(src_id, dst_id, data_size)
-            
             n_flits = math.ceil(data_size / self.icnt_context.flit_size)
-            # req_cmd = self.booksim2_module.create_data_cmd(src_id, dst_id, 0, n_flits, is_write=True, is_response=False)   # TODO: subnet index 
-            # self.booksim_send_packet_with_cmd(req_cmd)
-            # self.booksim_wait_cmd_and_handle(req_cmd)
-            
-            # rsp_cmd = self.booksim2_module.create_data_cmd(dst_id, src_id, 0, n_flits, is_write=True, is_response=True)    # TODO: subnet index 
-            # self.booksim_send_packet_with_cmd(rsp_cmd)
-            # self.booksim_wait_cmd_and_handle(rsp_cmd)
-            
             
             data_req_msg = RPCMessage(
                 src_core_id=self.core_id,
@@ -141,35 +114,6 @@ class IcntCore(Core):
     @core_command_method
     def _static_noc_create_data_write_transaction(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
         pass
-    
-    #############################################################
-    # BookSim2 Commands
-    #############################################################  
-        
-    
-    
-    # @core_conditional_command_method
-    # def booksim_send_packet_with_cmd(self, cmd):
-    #     return self.booksim2_module.dispatch_cmd(cmd)
-    
-    # @core_conditional_command_method
-    # def booksim_wait_cmd_and_handle(self, cmd):
-    #     return self.booksim2_module.check_command_executed(cmd)
-    
-    # @core_kernel_method
-    # def booksim_create_data_read_transaction(self, src_id: int, dst_id: int, size: int):
-    #     if self.is_booksim2_enabled:    # TODO: subnet index  
-            
-
-    #     else:
-    #         raise RuntimeError("[ERROR] BookSim2 is not enabled in this core.")
-        
-    # @core_kernel_method
-    # def booksim_create_data_write_transaction(self, src_id: int, dst_id: int, size: int):
-    #     if self.is_booksim2_enabled:    # TODO: subnet index 
-            
-    #     else:
-    #         raise RuntimeError("[ERROR] BookSim2 is not enabled in this core.")
 
 class IcntCoreCycleModel(CoreCycleModel):
     def __init__(self, core: IcntCore):
@@ -182,6 +126,3 @@ class IcntCoreCycleModel(CoreCycleModel):
 
     def _static_noc_create_data_write_transaction(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
         return self.core.icnt_context.get_data_packet_latency(src_coord, dst_coord, data_size)
-    
-    # def booksim_wait_cmd_and_handle(self, cmd):
-    #     return self.core.booksim2_module.get_cmd_wait_check_interval(cmd=cmd)

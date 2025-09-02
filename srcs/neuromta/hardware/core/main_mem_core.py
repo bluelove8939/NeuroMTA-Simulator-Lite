@@ -31,16 +31,6 @@ class MainMemoryCore(Core):
             size=self.cmap_context.config.main_mem_channel_size * self.cmap_context.config.n_main_mem_channels,
             n_channels=self.cmap_context.config.n_main_mem_channels
         )
-        
-        # if self.mem_context.main_config.dramsim3_enable and PYDRAMSIM3_AVAILABLE:
-        #     self.dramsim3_module = DRAMSim3(config=self.mem_context.main_config.dramsim3_config)
-        #     self.register_companion_module("DRAMSIM3", self.dramsim3_module)
-        # else:
-        #     self.dramsim3_module = None
-            
-    #############################################################
-    # Data Container (NoC Interface)
-    #############################################################
     
     @property
     def is_dramsim3_enabled(self) -> bool:
@@ -101,20 +91,6 @@ class MainMemoryCore(Core):
 
         page_elem: Page = self.mem_handle.get_data_element(ptr)
         container.data = page_elem.content.clone()  # Copy the content of the page element to the container
-
-    #############################################################
-    # DRAMSim3 Commands
-    #############################################################  
-    
-    
-    
-    # @core_kernel_method
-    # def dramsim_mem_load_page(self, ptr: Pointer):
-       
-        
-    # @core_kernel_method
-    # def dramsim_mem_store_page(self, ptr: Pointer):
-        
         
 class MainMemoryCoreCycleModel(CoreCycleModel):
     def __init__(self, core: MainMemoryCore):
