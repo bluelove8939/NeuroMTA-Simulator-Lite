@@ -4,6 +4,7 @@ from neuromta.framework import *
 
 from neuromta.hardware.context.mem_context import MemContext
 from neuromta.hardware.context.cmap_context import CmapContext
+from neuromta.hardware.context.icnt_context import IcntContext
 from neuromta.hardware.context.vpu_context import VPUConfig, VPUOperator
 from neuromta.hardware.context.mxu_context import MXUConfig, MXUDataflow
 
@@ -16,29 +17,28 @@ __all__ = [
 class NPUCore(Core):
     def __init__(
         self,
-        coord: tuple[int, int],
+        core_id: int,
         mem_context: MemContext, 
         cmap_context: CmapContext,
         vpu_config: VPUConfig = VPUConfig(),
         mxu_config: MXUConfig = MXUConfig(),
     ):
         super().__init__(
-            core_id=coord,  # coordinate is the core ID (it is guaranteed that each core is assigned with a unique coordinate in the given core grid!)
+            core_id=core_id,  # coordinate is the core ID (it is guaranteed that each core is assigned with a unique coordinate in the given core grid!)
             cycle_model=NPUCoreCycleModel(core=self),
         )
         
-        self.coord = coord
         self.mem_context = mem_context
         self.cmap_context = cmap_context
         
-        self.mem_handle = MemoryHandle(
-            mem_id=self.coord.__str__(), 
-            base_addr=self.cmap_context.get_base_addr_from_coord(self.coord), 
-            size=self.cmap_context.config.l1_mem_bank_size
-        )
-        
         self.mxu_context = mxu_config.create_context()
         self.vpu_context = vpu_config.create_context()
+        
+        self.mem_handle = MemoryHandle(
+            mem_id=self.core_id.__str__(), 
+            base_addr=self.cmap_context.get_base_addr_from_core_id(self.core_id), 
+            size=self.cmap_context.config.l1_spm_bank_size
+        )
 
     #############################################################
     # Semaphore Management (Inter-Core Control Mechanism)
@@ -123,7 +123,7 @@ class NPUCore(Core):
     #############################################################
     
     @core_command_method
-    def mem_load_page_from_container(self, ptr: Pointer, container: DataContainer):
+    def mem_load_page(self, ptr: Pointer, container: DataContainer):
         if ptr.ptr_type != PointerType.PAGE:
             raise ValueError("[ERROR] Memory copy requires page pointer.")
 
@@ -137,7 +137,7 @@ class NPUCore(Core):
         page_elem.content = container.data
 
     @core_command_method
-    def mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
+    def mem_store_page(self, ptr: Pointer, container: DataContainer):
         if ptr.ptr_type != PointerType.PAGE:
             raise ValueError("[ERROR] Memory copy requires page pointer.")
 
@@ -150,31 +150,100 @@ class NPUCore(Core):
         page_elem = self.mem_handle.get_data_element(ptr)
         container.data = page_elem.content.clone()  # Copy the content of the page element to the container
         
+    #############################################################
+    # Remote Asynchronous Memory Access (without NoC)
+    #############################################################
+    
+    @core_kernel_method
+    def async_page_read(self, dst_ptr: Pointer, src_ptr: Pointer):
+        src_owner_id = self.cmap_context.get_nxt_mem_core_id(self.core_id, src_ptr.addr)
+        dst_owner_id = self.core_id
+        
+        container = DataContainer()
+
+        mem_reader_msg = RPCMessage(
+            src_core_id=dst_owner_id,   # source of the RPC message will be myself
+            dst_core_id=src_owner_id,   # destination of the RPC message will be owner of the source pointer,
+            cmd_id="mem_store_page",
+        ).with_args(
+            ptr=src_ptr,
+            container=container
+        )
+        
+        # store page to container
+        self.async_rpc_send_req_msg(mem_reader_msg)
+        self.async_rpc_wait_rsp_msg(mem_reader_msg)
+
+        # load page from container
+        self.mem_load_page(dst_ptr, container)
+            
+    @core_kernel_method
+    def async_page_write(self, dst_ptr: Pointer, src_ptr: Pointer):
+        src_owner_id = self.core_id
+        dst_owner_id = self.cmap_context.get_nxt_mem_core_id(self.core_id, dst_ptr.addr)
+        
+        container = DataContainer()
+        
+        mem_writer_msg = RPCMessage(
+            src_core_id=src_owner_id,   # source of the RPC message will be myself
+            dst_core_id=dst_owner_id,   # destination of the RPC message will be owner of the source pointer,
+            cmd_id="mem_load_page",
+        ).with_args(
+            ptr=dst_ptr,
+            container=container
+        )
+        
+        # store page to container
+        self.mem_store_page(src_ptr, container)
+        
+        # load page from container
+        self.async_rpc_send_req_msg(mem_writer_msg)
+        self.async_rpc_wait_rsp_msg(mem_writer_msg)
+            
+    @core_kernel_method
+    def async_buffer_read(self, dst_ref: Reference, src_ref: Reference):
+        dst_handle = dst_ref.resolve(is_read=False)
+        src_handle = src_ref.resolve(is_read=True)  
+
+        for dst_ptr, src_ptr in zip(dst_handle.page_ptrs, src_handle.page_ptrs):
+            with new_parallel_thread():
+                self.async_page_read(dst_ptr, src_ptr)
+
+    @core_kernel_method
+    def async_buffer_write(self, dst_ref: Reference, src_ref: Reference):
+        dst_handle = dst_ref.resolve(is_read=False)
+        src_handle = src_ref.resolve(is_read=True)  
+
+        for dst_ptr, src_ptr in zip(dst_handle.page_ptrs, src_handle.page_ptrs):
+            with new_parallel_thread():
+                self.async_page_write(dst_ptr, src_ptr)
+        
+    #############################################################
+    # Remote Asynchronous Memory Access (via NoC)
+    #############################################################
+        
     @core_kernel_method
     def async_noc_page_read(self, dst_ptr: Pointer, src_ptr: Pointer):
         icnt_core_id = self.cmap_context.icnt_core_id
+        src_owner_id = self.cmap_context.get_nxt_mem_core_id(self.core_id, src_ptr.addr)
+        dst_owner_id = self.core_id
+        
         container = DataContainer()
-        
-        if self.coord != self.cmap_context.get_coord_from_address(dst_ptr.addr):
-            raise Exception(f"[ERROR] The destination pointer {dst_ptr.addr} is not owned by the current core {self.coord}.")
-        
-        dst_owner_id = self.coord
-        src_owner_id = self.cmap_context.get_coord_from_address(src_ptr.addr, hash_src_coord=self.coord)  # the number of destination can be more than 1 -> use hashing with the current coordinate
 
         noc_trans_msg = RPCMessage(
             src_core_id=self.core_id,
             dst_core_id=icnt_core_id,
             cmd_id="noc_create_data_read_transaction"
         ).with_args(
-            src_coord=src_owner_id,
-            dst_coord=dst_owner_id,
+            src_id=src_owner_id,
+            dst_id=dst_owner_id,
             data_size=dst_ptr.size,
         )
         
         mem_reader_msg = RPCMessage(
             src_core_id=self.core_id,   # source of the RPC message will be myself
             dst_core_id=src_owner_id,   # destination of the RPC message will be owner of the source pointer,
-            cmd_id="mem_store_page_to_container",
+            cmd_id="mem_store_page",
         ).with_args(
             ptr=src_ptr,
             container=container
@@ -194,33 +263,30 @@ class NPUCore(Core):
         self.async_rpc_wait_rsp_msg(noc_trans_msg)
         
         # load page from container
-        self.mem_load_page_from_container(dst_ptr, container)
+        self.mem_load_page(dst_ptr, container)
             
     @core_kernel_method
     def async_noc_page_write(self, dst_ptr: Pointer, src_ptr: Pointer):
         icnt_core_id = self.cmap_context.icnt_core_id
+        src_owner_id = self.core_id
+        dst_owner_id = self.cmap_context.get_nxt_mem_core_id(self.core_id, dst_ptr.addr)
+        
         container = DataContainer()
-        
-        if self.coord != self.cmap_context.get_coord_from_address(src_ptr.addr):
-            raise Exception(f"[ERROR] The source pointer {dst_ptr} is not owned by the current core {self.coord}.")
-        
-        src_owner_id = self.coord
-        dst_owner_id = self.cmap_context.get_coord_from_address(dst_ptr.addr, hash_src_coord=self.coord)  # the number of destination can be more than 1 -> use hashing with the current coordinate
         
         noc_trans_msg = RPCMessage(
             src_core_id=self.core_id,
             dst_core_id=icnt_core_id,
             cmd_id="noc_create_data_write_transaction"
         ).with_args(
-            src_coord=src_owner_id,
-            dst_coord=dst_owner_id,
+            src_id=src_owner_id,
+            dst_id=dst_owner_id,
             data_size=dst_ptr.size,
         )
         
         mem_writer_msg = RPCMessage(
             src_core_id=self.core_id,   # source of the RPC message will be myself
             dst_core_id=dst_owner_id,   # destination of the RPC message will be owner of the source pointer,
-            cmd_id="mem_load_page_from_container",
+            cmd_id="mem_load_page",
         ).with_args(
             ptr=dst_ptr,
             container=container
@@ -232,7 +298,7 @@ class NPUCore(Core):
         # TODO: Check whether the latency model implemented below is accurate.
         
         # store page to container
-        self.mem_store_page_to_container(src_ptr, container)
+        self.mem_store_page(src_ptr, container)
         
         # transfer page through NoC
         self.async_rpc_send_req_msg(noc_trans_msg)
@@ -369,11 +435,11 @@ class NPUCoreCycleModel(CoreCycleModel):
         return self.core.mem_context.l1_config.get_cycles(size=src_ptr.size)
 
     @core_command_method
-    def mem_load_page_from_container(self, ptr: Pointer, container: DataContainer):
+    def mem_load_page(self, ptr: Pointer, container: DataContainer):
         return self.core.mem_context.l1_config.get_cycles(size=ptr.size)
 
     @core_command_method
-    def mem_store_page_to_container(self, ptr: Pointer, container: DataContainer):
+    def mem_store_page(self, ptr: Pointer, container: DataContainer):
         return self.core.mem_context.l1_config.get_cycles(size=ptr.size)
 
     def mxu_tiled_gemm(

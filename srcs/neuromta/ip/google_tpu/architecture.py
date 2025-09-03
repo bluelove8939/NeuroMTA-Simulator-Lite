@@ -10,54 +10,44 @@ from neuromta.hardware.companions.dramsim import PYDRAMSIM3_AVAILABLE, DRAMSim3C
 
 
 __all__ = [
-    "TenstorrentConfig",
-    "TenstorrentDevice",
+    "GoogleTPUConfig",
+    "GoogleTPUDevice",
 ]
 
 
-TENSTORRENT_IP_ROOT = os.path.abspath(os.path.dirname(__file__))
-TENSTORRENT_IP_CACHE_DIR = os.path.join(TENSTORRENT_IP_ROOT, ".cache")
-TENSTORRENT_IP_DRAMSIM_CONFIG_FMT = os.path.join(TENSTORRENT_IP_CACHE_DIR, "dramsim_{config_name}.ini").format
+GOOGLE_TPU_IP_ROOT = os.path.abspath(os.path.dirname(__file__))
+GOOGLE_TPU_IP_CACHE_DIR = os.path.join(GOOGLE_TPU_IP_ROOT, ".cache")
+GOOGLE_TPU_IP_DRAMSIM_CONFIG_FMT = os.path.join(GOOGLE_TPU_IP_CACHE_DIR, "dramsim_{config_name}.ini").format
 
 
-class TenstorrentConfig(dict):
+
+class GoogleTPUConfig(dict):
     def __init__(
         self,
         
         processor_clock_freq: int,
-        icnt_config: IcntConfig, 
         cmap_config: CmapConfig,
         mem_config: MemConfig,
         mxu_config: MXUConfig,
         vpu_config: VPUConfig, 
     ):
         self["processor_clock_freq"] = processor_clock_freq
-        self["icnt_config"] = icnt_config
         self["cmap_config"] = cmap_config
         self["mem_config"] = mem_config
         self["mxu_config"] = mxu_config
         self["vpu_config"] = vpu_config
         
     @classmethod
-    def BLACKHOLE(cls) -> 'TenstorrentConfig':
-        config_name = "blackhole"
+    def V4(cls) -> 'GoogleTPUConfig':
+        config_name = "v4"
         
         processor_clock_freq    = parse_freq_str("1GHz")
-        main_mem_channel_size   = parse_mem_cap_str("4GB")
-        l1_mem_bank_size        = parse_mem_cap_str("1.5MB")
-
-        icnt_shape = (12, 16)
-        n_npu_core = 12 * 14
-        n_dma_core = 12 * 2
-        n_dma_core_per_channel    = 3
-        n_main_mem_channels = math.ceil(n_dma_core / n_dma_core_per_channel)
+        main_mem_channel_size   = parse_mem_cap_str("2GB")
+        l1_mem_bank_size        = parse_mem_cap_str("48MB")
+        n_main_mem_channels     = 16
         
-        icnt_config = IcntConfig(
-            shape=icnt_shape,
-            flit_size=parse_mem_cap_str("16B"),  # TODO: (flit size) * (processor clock) * (full-duplex) * (node per router) = 16B * 1GHz * 2 * 6 = 192GB/s (???)
-            control_packet_size=parse_mem_cap_str("32B"),
-            booksim2_enable=PYBOOKSIM2_AVAILABLE,
-        )
+        n_dma_core = n_main_mem_channels
+        n_npu_core = 2
         
         cmap_config = CmapConfig(
             n_l1_spm_bank=n_npu_core,
@@ -66,46 +56,27 @@ class TenstorrentConfig(dict):
             main_mem_channel_size=main_mem_channel_size,
         )
         
-        dma_core_group: dict[int, list[int]] = {}
-
-        for row in range(12):
-            inter_ch_idx = row // n_dma_core_per_channel
-            intra_ch_idx = row % n_dma_core_per_channel
+        for i in range(n_dma_core):
+            cmap_config.add_dma_core(i, mem_bank_idx=i)
             
-            dma_core_ch_col_0_id = icnt_config.coord_to_core_id((row, 0))
-            dma_core_ch_col_1_id = icnt_config.coord_to_core_id((row, 8))
-            
-            cmap_config.add_dma_core(core_id=dma_core_ch_col_0_id, mem_bank_idx=inter_ch_idx * 2)
-            cmap_config.add_dma_core(core_id=dma_core_ch_col_1_id, mem_bank_idx=inter_ch_idx * 2 + 1)
-            
-            dma_core_group[intra_ch_idx] = dma_core_group.get(intra_ch_idx, []) + [dma_core_ch_col_0_id, dma_core_ch_col_1_id]
-        
-        for row in range(12):
-            intra_ch_idx = row % n_dma_core_per_channel
-            
-            for i in range(7):
-                cmap_config.add_npu_core(core_id=icnt_config.coord_to_core_id((row, 1 + i)), mem_bank_idx=(row * 14) + i,     nxt_level_mem_core_ids=dma_core_group[intra_ch_idx])
-                cmap_config.add_npu_core(core_id=icnt_config.coord_to_core_id((row, 9 + i)), mem_bank_idx=(row * 14) + i + 7, nxt_level_mem_core_ids=dma_core_group[intra_ch_idx])
-
+        for i in range(n_npu_core):
+            cmap_config.add_npu_core(i+n_dma_core, mem_bank_idx=i, nxt_level_mem_core_ids=list(range(n_dma_core)))
 
         l1_mem_config = L1MemoryConfig(
             access_gran=parse_mem_cap_str("512B"),
         )
 
         if PYDRAMSIM3_AVAILABLE:
-            dramsim3_config_path    = TENSTORRENT_IP_DRAMSIM_CONFIG_FMT(config_name=config_name)
+            dramsim3_config_path    = GOOGLE_TPU_IP_DRAMSIM_CONFIG_FMT(config_name=config_name)
             dramsim3_channel_size   = main_mem_channel_size // (1024 * 1024)    # GB -> MB
             
             create_new_dramsim_config_file(
-                src_config_path="GDDR6_8Gb_x16.ini",
+                src_config_path="HBM2_8Gb_x128.ini",
                 new_config_path=dramsim3_config_path,
                 system_params={
                     "channel_size": dramsim3_channel_size,
                     "channels": n_main_mem_channels,
                 },
-                dram_structure_params={
-                    "bankgroups": 2  # TODO: more authentic way of doing this..?
-                }
             )
             
             dramsim3_config = DRAMSim3Config(
@@ -135,17 +106,17 @@ class TenstorrentConfig(dict):
         )
         
         mxu_config = MXUConfig(
-            pe_arr_height=32,
-            pe_arr_width=32,
-            seq_len=32,
+            pe_arr_height=128,
+            pe_arr_width=128,
+            seq_len=128,  # TODO: sequence length is 128? 256? for now decide for simple tiling ...
             dtype=torch.float32,
             acc_dtype=torch.float32,
-            dataflow=MXUDataflow.OS,
+            dataflow=MXUDataflow.WS,
             op_latency_per_byte=1,
         )
         
         vpu_config = VPUConfig(
-            vreg_len=parse_mem_cap_str("128B"),
+            vreg_len=parse_mem_cap_str("512B"),
             vreg_num=32,
             vdtype=torch.float32,
             
@@ -159,15 +130,13 @@ class TenstorrentConfig(dict):
         return cls(
             processor_clock_freq=processor_clock_freq,
             cmap_config=cmap_config,
-            icnt_config=icnt_config,
             mem_config=mem_config,
             mxu_config=mxu_config,
             vpu_config=vpu_config,
         )
-        
 
-class TenstorrentDevice(MultiTileAccelerator):
-    def __init__(self, processor_clock_freq, cmap_config, icnt_config, mem_config, mxu_config, vpu_config):
-        super().__init__(cmap_config, icnt_config, mem_config, mxu_config, vpu_config)
+class GoogleTPUDevice(MultiCoreAccelerator):
+    def __init__(self, processor_clock_freq, cmap_config, mem_config, mxu_config, vpu_config):
+        super().__init__(cmap_config, mem_config, mxu_config, vpu_config)
         
         self.processor_clock_freq = processor_clock_freq

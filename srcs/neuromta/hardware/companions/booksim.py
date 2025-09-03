@@ -1,4 +1,3 @@
-import math
 from ctypes import c_void_p
 from neuromta.framework import *
 
@@ -58,12 +57,6 @@ class BookSim2(CompanionModule):
 
     def update_cycle_time(self, cycle_time):
         pybooksim2.icnt_cycle_step(icnt=self._icnt, cycles=cycle_time)
-        
-    # def create_data_cmd(self, src_id: int, dst_id: int, subnet: int, size: int, is_write: bool, is_response: bool):
-    #     return pybooksim2.create_icnt_cmd_data_packet(src_id, dst_id, subnet, size, is_write, is_response)
-
-    # def create_control_cmd(self, src_id: int, dst_id: int, subnet: int, size: int, is_response: bool):
-    #     return pybooksim2.create_icnt_cmd_control_packet(src_id, dst_id, subnet, size, is_response)
 
     def create_command(self, src_id: int, dst_id: int, subnet: int, n_flits: int, is_write: bool, is_response: bool):
         return pybooksim2.create_icnt_cmd_data_packet(src_id, dst_id, subnet, n_flits, is_write, is_response)

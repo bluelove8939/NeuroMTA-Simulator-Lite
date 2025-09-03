@@ -60,14 +60,14 @@ class CompanionCore(Core):
         self._companion_modules: dict[str, CompanionModule] = {}
         
     def register_companion_module(self, module_id: str, module: CompanionModule):
+        if not isinstance(module, CompanionModule):
+            raise Exception(f"[ERROR] The module must be an instance of CompanionModule, but got {type(module)}")
+        
         self._companion_modules[module_id] = module
         module.module_id = module_id
         
     def get_companion_module(self, module_id: str) -> CompanionModule:
         return self._companion_modules.get(module_id, None)
-    
-    # def update_cycle_time(self, cycle_time):
-    #     super().update_cycle_time(cycle_time)
 
     def update_cycle_time_companion_modules(self, cycle_time: int):
         for cmod in self._companion_modules.values():

@@ -32,10 +32,8 @@ class IcntCore(Core):
         return PYBOOKSIM2_AVAILABLE and self.icnt_context.booksim2_enable
 
     @core_kernel_method
-    def noc_create_data_read_transaction(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
+    def noc_create_data_read_transaction(self, src_id: int, dst_id: int, data_size: int):
         if self.is_booksim2_enabled:
-            src_id = self.cmap_context.get_node_id_from_coord(src_coord)
-            dst_id = self.cmap_context.get_node_id_from_coord(dst_coord)
             n_flits = math.ceil(data_size / self.icnt_context.flit_size)
             
             data_req_msg = RPCMessage(
@@ -67,13 +65,11 @@ class IcntCore(Core):
             self.async_rpc_wait_rsp_msg(data_rsq_msg)
             
         else:
-            self._static_noc_create_data_read_transaction(src_coord, dst_coord, data_size)
+            self._static_noc_create_data_read_transaction(src_id, src_id, data_size)
             
     @core_kernel_method
-    def noc_create_data_write_transaction(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
+    def noc_create_data_write_transaction(self, src_id: int, dst_id: int, data_size: int):
         if self.is_booksim2_enabled:
-            src_id = self.cmap_context.get_node_id_from_coord(src_coord)
-            dst_id = self.cmap_context.get_node_id_from_coord(dst_coord)
             n_flits = math.ceil(data_size / self.icnt_context.flit_size)
             
             data_req_msg = RPCMessage(
@@ -105,14 +101,14 @@ class IcntCore(Core):
             self.async_rpc_wait_rsp_msg(data_rsq_msg)
             
         else:
-            self._static_noc_create_data_write_transaction(src_coord, dst_coord, data_size)
+            self._static_noc_create_data_write_transaction(src_id, dst_id, data_size)
 
     @core_command_method
-    def _static_noc_create_data_read_transaction(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
+    def _static_noc_create_data_read_transaction(self, src_id: int, dst_id: int, data_size: int):
         pass
 
     @core_command_method
-    def _static_noc_create_data_write_transaction(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
+    def _static_noc_create_data_write_transaction(self, src_id: int, dst_id: int, data_size: int):
         pass
 
 class IcntCoreCycleModel(CoreCycleModel):
@@ -121,8 +117,8 @@ class IcntCoreCycleModel(CoreCycleModel):
         
         self.core = core
 
-    def _static_noc_create_data_read_transaction(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
-        return self.core.icnt_context.get_data_packet_latency(src_coord, dst_coord, data_size)
+    def _static_noc_create_data_read_transaction(self, src_id: int, dst_id: int, data_size: int):
+        return self.core.icnt_context.get_data_packet_latency(src_id, dst_id, data_size)
 
-    def _static_noc_create_data_write_transaction(self, src_coord: tuple[int, int], dst_coord: tuple[int, int], data_size: int):
-        return self.core.icnt_context.get_data_packet_latency(src_coord, dst_coord, data_size)
+    def _static_noc_create_data_write_transaction(self, src_id: int, dst_id: int, data_size: int):
+        return self.core.icnt_context.get_data_packet_latency(src_id, dst_id, data_size)

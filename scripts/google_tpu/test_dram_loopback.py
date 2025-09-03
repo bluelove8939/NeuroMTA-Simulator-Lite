@@ -4,7 +4,7 @@ import torch
 
 from neuromta.framework import *
 from neuromta.hardware import *
-from neuromta.ip.tenstorrent.architecture import TenstorrentConfig, TenstorrentDevice
+from neuromta.ip.google_tpu.architecture import GoogleTPUConfig, GoogleTPUDevice
 
 
 FILENAME = os.path.splitext(os.path.basename(__file__))[0]
@@ -14,14 +14,14 @@ TRACE_DIR = os.path.join(os.path.dirname(__file__), ".logs", FILENAME)
 @core_kernel_method
 def kernel_main(core: NPUCore, main_in_ptr: Reference, l1_ptr: Reference, main_out_ptr: Reference, n_pages: int):
     for i in range(n_pages):
-        core.async_noc_buffer_read(l1_ptr[0], main_in_ptr[i])
-        core.async_noc_buffer_write(main_out_ptr[i], l1_ptr[0])
+        core.async_buffer_read(l1_ptr[0], main_in_ptr[i])
+        core.async_buffer_write(main_out_ptr[i], l1_ptr[0])
 
 
 if __name__ == "__main__":
-    config = TenstorrentConfig.BLACKHOLE()
+    config = GoogleTPUConfig.V4()
     
-    device = TenstorrentDevice(**config)
+    device = GoogleTPUDevice(**config)
     device.initialize()
     device.change_sim_model_options(use_cycle_model=True, use_functional_model=True)
     

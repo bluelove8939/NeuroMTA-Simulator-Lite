@@ -1,5 +1,5 @@
 import enum
-from typing import Any
+from typing import Sequence
 
 from neuromta.framework import *
 from neuromta.hardware.companions.booksim import BookSim2Config, PYBOOKSIM2_AVAILABLE
@@ -27,6 +27,21 @@ class CmapCoreType(enum.Enum):
     @property
     def is_memory_space_owner(self) -> bool:
         return self in (CmapCoreType.NPU, CmapCoreType.DMA)
+    
+
+class CmapCoreInfo:
+    def __init__(self, core_type: CmapCoreType, base_addr: int=None, addr_space_size: int=None, nxt_level_mem_core_ids: list[int]=None):
+        self.core_type = core_type
+        self.base_addr = base_addr
+        self.addr_space_size = addr_space_size
+        self.nxt_level_mem_core_ids = nxt_level_mem_core_ids
+        
+        if self.nxt_level_mem_core_ids is not None:
+            if not isinstance(self.nxt_level_mem_core_ids, Sequence):
+                self.nxt_level_mem_core_ids = [self.nxt_level_mem_core_ids]
+                
+    def __str__(self):
+        return f"CmapCoreInfo(core_type={self.core_type}, base_addr={self.base_addr}, addr_space_size={self.addr_space_size}, nxt_level_mem_core_ids={self.nxt_level_mem_core_ids})"
 
 
 class CmapMemType(enum.Enum):
@@ -39,28 +54,26 @@ class AddressSpaceEntry:
         self.mem_type = mem_type
         self.size = size
         
-        self.core_ids: list[tuple[int, int]] = []
+        self.core_ids: list[int] = []
         
-    def add_core_id(self, coord: tuple[int, int]):
-        self.core_ids.append(coord)
+    def add_core_id(self, core_id: int):
+        self.core_ids.append(core_id)
 
 
 class CmapConfig:
     def __init__(
         self,
         
-        shape: tuple[int, int], 
-        n_l1_mem_bank: int,
+        n_l1_spm_bank: int,
         n_main_mem_channels: int,
-        l1_mem_bank_size: int       = parse_mem_cap_str("1MB"),
-        main_mem_channel_size: int  = parse_mem_cap_str("1GB"),
+        l1_spm_bank_size: int,      # = parse_mem_cap_str("1MB"),
+        main_mem_channel_size: int, # = parse_mem_cap_str("1GB"),
     ):
         super().__init__()
-        
-        self.shape                  = shape
-        self.n_l1_mem_bank          = n_l1_mem_bank
+
+        self.n_l1_spm_bank          = n_l1_spm_bank
         self.n_main_mem_channels    = n_main_mem_channels
-        self.l1_mem_bank_size       = l1_mem_bank_size
+        self.l1_spm_bank_size       = l1_spm_bank_size
         self.main_mem_channel_size  = main_mem_channel_size
         
         self.icnt_core_id           = ICNT_CORE_NAME
@@ -69,87 +82,103 @@ class CmapConfig:
         self.booksim_module_id      = BOOKSIM_MODULE_ID
         self.dramsim_module_id      = DRAMSIM_MODULE_ID 
         
-        self.core_map: dict[Any, CmapCoreType] = {}
+        self.core_map: dict[int, CmapCoreInfo] = {}
         self.addr_space: dict[int, AddressSpaceEntry] = {}
 
         self.main_mem_base_addr = 0x00000000
-        self.l1_mem_base_addr = self.main_mem_base_addr + self.n_main_mem_channels * self.main_mem_channel_size
+        self.l1_spm_base_addr = self.main_mem_base_addr + self.n_main_mem_channels * self.main_mem_channel_size
         
         for i in range(self.n_main_mem_channels):
             base_addr = self.main_mem_base_addr + i * self.main_mem_channel_size
             self.addr_space[base_addr] = AddressSpaceEntry(mem_type=CmapMemType.MAIN, size=self.main_mem_channel_size)
         
-        for i in range(self.n_l1_mem_bank):
-            base_addr = self.l1_mem_base_addr + i * self.l1_mem_bank_size
-            self.addr_space[base_addr] = AddressSpaceEntry(mem_type=CmapMemType.L1, size=self.l1_mem_bank_size)
-
-    def add_core(self, core_type: CmapCoreType, core_id: Any, mem_bank_idx: int=None):
-        if not (0 <= core_id[0] < self.shape[0]) or not (0 <= core_id[1] < self.shape[1]):
-            raise ValueError(f"Coordinate {core_id} is out of bounds for core map shape {self.shape}.")
-        if core_id in self.core_map.keys():
-            raise ValueError(f"Coordinate {core_id} is already assigned to a core.")
-
-        self.core_map[core_id] = core_type
-
-        if core_type.is_memory_space_owner:
-            if mem_bank_idx is None:
-                raise Exception(f"[ERROR] Memory bank index is required for {core_type}.")
-
-            if core_type == CmapCoreType.DMA:
-                mem_type=CmapMemType.MAIN
-                base_addr=self.main_mem_base_addr + mem_bank_idx * self.main_mem_channel_size
-                size=self.main_mem_channel_size
-            elif core_type == CmapCoreType.NPU:    
-                mem_type=CmapMemType.L1
-                base_addr=self.l1_mem_base_addr + mem_bank_idx * self.l1_mem_bank_size
-                size=self.l1_mem_bank_size
-
-            if base_addr not in self.addr_space.keys():
-                raise Exception(f"[ERROR] Address {base_addr} is not mapped in the address space.")
-            
-            addr_space_entry = self.addr_space[base_addr]
-            
-            if addr_space_entry.mem_type != mem_type or addr_space_entry.size != size:
-                raise ValueError(f"Address {base_addr} is already assigned to a different memory type.")
-            
-            addr_space_entry.core_ids.append(core_id)
-
-    def get_core_ids(self, core_type: CmapCoreType) -> tuple:
-        coords = [coord for coord, ctype in self.core_map.items() if ctype == core_type]
-        if not coords:
-            raise ValueError(f"No core of type {core_type} found in the core map.")
-        return tuple(map(tuple, coords))
+        for i in range(self.n_l1_spm_bank):
+            base_addr = self.l1_spm_base_addr + i * self.l1_spm_bank_size
+            self.addr_space[base_addr] = AddressSpaceEntry(mem_type=CmapMemType.L1, size=self.l1_spm_bank_size)
     
-    def create_booksim2_config(self) -> BookSim2Config:
-        if not PYBOOKSIM2_AVAILABLE:
-            return None  # if pybooksim2 is not installed, we cannot create a BookSim2 configuration
-
-        x_dim = self.shape[0]
-        y_dim = self.shape[1]
-
-        return BookSim2Config(
-            subnets=1,  # TODO
-            x=x_dim,
-            y=y_dim,
-            xr=1,   # no concentration by default
-            yr=1,   # no concentration by default
+    def add_npu_core(self, core_id: int, mem_bank_idx: int, nxt_level_mem_core_ids: list[int]):
+        if not isinstance(core_id, int):
+            raise TypeError(f"Core ID must be an integer.")
+        if core_id in self.core_map.keys():
+            raise ValueError(f"Core ID {core_id} is already assigned.")
+        
+        mem_type=CmapMemType.L1
+        base_addr=self.l1_spm_base_addr + mem_bank_idx * self.l1_spm_bank_size
+        addr_space_size=self.l1_spm_bank_size
+        
+        self.core_map[core_id] = CmapCoreInfo(
+            core_type=CmapCoreType.NPU,
+            base_addr=base_addr,
+            addr_space_size=addr_space_size,
+            nxt_level_mem_core_ids=nxt_level_mem_core_ids,
         )
+        
+        if base_addr not in self.addr_space.keys():
+            raise Exception(f"[ERROR] Address {base_addr} is not mapped in the address space.")
+        
+        addr_space_entry = self.addr_space[base_addr]
+        
+        if addr_space_entry.mem_type != mem_type or addr_space_entry.size != addr_space_size:
+            raise ValueError(f"Address {base_addr} is already assigned to a different memory type.")
+        
+        if len(addr_space_entry.core_ids) >= 1:
+            raise Exception(f"[ERROR] Address {base_addr} is already assigned to another core.")
+
+        addr_space_entry.core_ids.append(core_id)
+        
+    def add_dma_core(self, core_id: int, mem_bank_idx: int):
+        if not isinstance(core_id, int):
+            raise TypeError(f"Core ID must be an integer.")
+        if core_id in self.core_map.keys():
+            raise ValueError(f"Core ID {core_id} is already assigned.")
+        
+        mem_type=CmapMemType.MAIN
+        base_addr=self.main_mem_base_addr + mem_bank_idx * self.main_mem_channel_size
+        addr_space_size=self.main_mem_channel_size
+        
+        self.core_map[core_id] = CmapCoreInfo(
+            core_type=CmapCoreType.DMA,
+            base_addr=base_addr,
+            addr_space_size=addr_space_size,
+            nxt_level_mem_core_ids=None
+        )
+
+        if base_addr not in self.addr_space.keys():
+            raise Exception(f"[ERROR] Address {base_addr} is not mapped in the address space.")
+        
+        addr_space_entry = self.addr_space[base_addr]
+        
+        if addr_space_entry.mem_type != mem_type or addr_space_entry.size != addr_space_size:
+            raise ValueError(f"Address {base_addr} is already assigned to a different memory type.")
+
+        addr_space_entry.core_ids.append(core_id)
+
+    def get_core_ids(self, core_type: CmapCoreType) -> tuple[int]:
+        ids = [coord for coord, cinfo in self.core_map.items() if cinfo.core_type == core_type]
+        if not ids:
+            raise ValueError(f"No core of type {core_type} found in the core map.")
+        return tuple(ids)
         
     def count_core(self, core_type: CmapCoreType) -> int:
         return sum(1 for ctype in self.core_map.values() if ctype == core_type)
     
     def check_main_mem_addr(self, addr: int) -> bool:
-        return self.main_mem_base_addr <= addr < self.l1_mem_base_addr
+        return self.main_mem_base_addr <= addr < self.l1_spm_base_addr
     
     def check_l1_mem_addr(self, addr: int) -> bool:
-        return self.l1_mem_base_addr <= addr < (self.l1_mem_base_addr + self.n_l1_mem_bank * self.l1_mem_bank_size)
+        return self.l1_spm_base_addr <= addr < (self.l1_spm_base_addr + self.n_l1_spm_bank * self.l1_spm_bank_size)
     
-    def get_main_mem_ch_id_from_addr(self, addr: int) -> int:
-        if not self.check_main_mem_addr(addr):
-            raise ValueError(f"Address {hex(addr)} is not in the main memory address range.")
+    def get_mem_base_addr(self, addr: int) -> int:
+        if self.check_l1_mem_addr(addr):
+            base_addr = self.l1_spm_base_addr
+            bank_size = self.l1_spm_bank_size
+        elif self.check_main_mem_addr(addr):
+            base_addr = self.main_mem_base_addr
+            bank_size = self.main_mem_channel_size
+        else:
+            raise ValueError(f"Address {addr} is out of range of main memory and L1 SPM.")
         
-        offset = addr - self.main_mem_base_addr
-        return offset // self.main_mem_channel_size
+        return ((addr - base_addr) // bank_size) * bank_size + base_addr
     
 
 class CmapContext:
@@ -159,30 +188,37 @@ class CmapContext:
         config: CmapConfig,
     ):
         self._config = config
-        
-        self._base_addr_to_coord_mappings:  dict[int, tuple[tuple[int, int], int]] = {}
-        self._coord_to_base_addr_mappings:  dict[tuple[int, int], int] = {}
-        self._coord_to_main_ch_id_mappings: dict[tuple[int, int], int] = {}
-        
-        self._npu_core_coords: tuple[tuple[int, int]] = self.config.get_core_ids(CmapCoreType.NPU)
-        self._dma_core_coords: tuple[tuple[int, int]] = self.config.get_core_ids(CmapCoreType.DMA)
-        
-        for base_addr, addr_space_entry in self.config.addr_space.items():
-            size = addr_space_entry.size
 
-            for coord in addr_space_entry.core_ids:
-                self._base_addr_to_coord_mappings[base_addr] = (coord, size)
-                self._coord_to_base_addr_mappings[coord] = base_addr
-                
-                if coord in self._dma_core_coords:
-                    self._coord_to_main_ch_id_mappings[coord] = self.config.get_main_mem_ch_id_from_addr(base_addr)
-
-    def get_base_addr_from_coord(self, coord: tuple[int, int]) -> int:
-        if coord not in self._coord_to_base_addr_mappings:
-            raise ValueError(f"Coordinate {coord} does not map to a valid base address.")
-        return self._coord_to_base_addr_mappings[coord]
+        self._npu_core_ids: tuple[int] = tuple(sorted(self.config.get_core_ids(CmapCoreType.NPU)))
+        self._dma_core_ids: tuple[int] = tuple(sorted(self.config.get_core_ids(CmapCoreType.DMA)))
+        
+    def get_nxt_mem_core_id(self, src_core_id: int, addr: int) -> int:
+        if self.config.check_l1_mem_addr(addr):
+            base_addr = self.config.get_mem_base_addr(addr)
+            addr_space_entry = self.config.addr_space[base_addr]
+            core_id = addr_space_entry.core_ids[0]  # TODO: the numebr of L1 memory owner is always 1 ???
             
-    def get_coord_from_address(self, addr: int, hash_src_coord: tuple[int, int]=None) -> tuple[int, int]:
+            return core_id
+        
+        src_core_info = self.config.core_map[src_core_id]
+        
+        if src_core_info.nxt_level_mem_core_ids is None:
+            raise ValueError(f"Core ID {src_core_id} does not have a next-level memory.")
+        
+        for dst_core_id in src_core_info.nxt_level_mem_core_ids:
+            dst_core_info = self.config.core_map[dst_core_id]
+            
+            if dst_core_info.core_type == CmapCoreType.CACHE:
+                return dst_core_id
+            elif dst_core_info.base_addr <= addr < (dst_core_info.base_addr + dst_core_info.addr_space_size):
+                return dst_core_id
+            
+        raise ValueError(f"Address {addr} is out of range of the next-level memory of core ID {src_core_id}.")
+
+    def get_base_addr_from_core_id(self, core_id: int) -> int:
+        return self.config.core_map[core_id].base_addr
+            
+    def get_addr_space_entry_from_address(self, addr: int) -> AddressSpaceEntry:
         keys = sorted(self.config.addr_space.keys())
         left, right = 0, len(keys) - 1
 
@@ -192,16 +228,9 @@ class CmapContext:
             
             addr_space_entry = self.config.addr_space[base_addr]
             size = addr_space_entry.size
-            coords = addr_space_entry.core_ids
 
             if base_addr <= addr < (base_addr + size):
-                if hash_src_coord is None:
-                    if len(coords) == 1:
-                        return coords[0]
-                    else:
-                        raise Exception(f"[ERROR] No hash key is provided for address {hex(addr)} but the number of coords associated is more than 1. To avoid this exception, please provide a hash key.")
-                else:
-                    return coords[self._coord_hash_with(key="row", src_coord=hash_src_coord, n_entry=len(coords))]
+                return addr_space_entry
             if base_addr > addr:
                 right = mid - 1
             else:
@@ -209,21 +238,17 @@ class CmapContext:
                 
         return []  # Address does not map to any core
     
-    def get_node_id_from_coord(self, coord: tuple[int, int]) -> int:
-        core_grid_width = self.config.shape[-1]
-        return coord[0] * core_grid_width + coord[1]
-    
     @property
     def config(self) -> CmapConfig:
         return self._config
 
     @property
-    def npu_core_coords(self) -> tuple[tuple[int, int]]:
-        return self._npu_core_coords
+    def npu_core_ids(self) -> tuple[int]:
+        return self._npu_core_ids
 
     @property
-    def dma_core_coords(self) -> tuple[tuple[int, int]]:
-        return self._dma_core_coords
+    def dma_core_ids(self) -> tuple[int]:
+        return self._dma_core_ids
     
     @property
     def icnt_core_id(self) -> str:
@@ -232,10 +257,3 @@ class CmapContext:
     @property
     def main_mem_core_id(self) -> str:
         return self._config.main_mem_core_id
-    
-    @staticmethod
-    def _coord_hash_with(key: str, src_coord: tuple[int, int], n_entry: int) -> int:
-        if key == "row":
-            return src_coord[0] % n_entry
-        raise ValueError(f"Unknown key: {key}")
-

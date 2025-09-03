@@ -9,4 +9,5 @@ from neuromta.hardware.core.dma_core import *
 from neuromta.hardware.core.icnt_core import *
 from neuromta.hardware.core.main_mem_core import *
 
-from neuromta.hardware.implementation.mt_accelerator import *
+from neuromta.hardware.implementation.multi_tile_accelerator import *
+from neuromta.hardware.implementation.multi_core_accelerator import *

@@ -55,7 +55,7 @@ class L1MemoryConfig:
         return math.ceil(size / self.access_gran)
 
 
-class MemConfig(dict):
+class MemConfig:
     def __init__(
         self,
         l1_config: L1MemoryConfig = L1MemoryConfig(),
@@ -63,23 +63,21 @@ class MemConfig(dict):
     ):
         super().__init__()
         
-        self["l1_config"] = l1_config
-        self["main_config"] = main_config
+        self.l1_config = l1_config
+        self.main_config = main_config
 
 class MemContext:
-    def __init__(
-        self,  
-        
-        l1_config: L1MemoryConfig,
-        main_config: MainMemoryConfig,
-    ):
-        self._l1_config = l1_config
-        self._main_config = main_config
+    def __init__(self, config: MemConfig):
+        self._config = config
     
     @property
     def l1_config(self) -> L1MemoryConfig:
-        return self._l1_config
+        return self.config.l1_config
 
     @property
     def main_config(self) -> MainMemoryConfig:
-        return self._main_config
+        return self.config.main_config
+    
+    @property
+    def config(self) -> MemConfig:
+        return self._config

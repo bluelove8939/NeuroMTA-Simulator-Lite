@@ -28,7 +28,6 @@ def read_kernel(
     # load psum to the l1 circular buffer
     core.cb_reserve_back(cb_psum_ptr, 1)
     core.async_noc_buffer_read(cb_psum_ptr[0], bf_psum_ptr[0])
-    core.async_rpc_barrier()
     core.cb_push_back(cb_psum_ptr, 1)
     
     # load ifm and wgt to the l1 circular buffer
@@ -38,7 +37,6 @@ def read_kernel(
         
         core.async_noc_buffer_read(cb_ifm_ptr[0], bf_ifm_ptr[i])
         core.async_noc_buffer_read(cb_wgt_ptr[0], bf_wgt_ptr[i])
-        core.async_rpc_barrier()
         
         core.cb_push_back(cb_ifm_ptr, 1)
         core.cb_push_back(cb_wgt_ptr, 1)
@@ -91,7 +89,6 @@ def write_kernel(
 ):
     core.cb_wait_front(cb_ofm_ptr, 1)
     core.async_noc_buffer_write(bf_ofm_ptr[0], cb_ofm_ptr[0])
-    core.async_rpc_barrier()
     core.cb_pop_front(cb_ofm_ptr, 1)
 
 
@@ -99,18 +96,14 @@ if __name__ == "__main__":
     torch.set_printoptions(linewidth=1024, sci_mode=False)
     
     config = TenstorrentConfig.BLACKHOLE()
-    # mxu_config: MXUConfig = config["mxu_config"]
-    # mxu_config["pe_arr_height"] = 8
-    # mxu_config["pe_arr_width"] = 8
-    # mxu_config["seq_len"] = 8
 
     device = TenstorrentDevice(**config)
     device.initialize()
     device.change_sim_model_options(use_cycle_model=True, use_functional_model=True)
     
-    M = 64
-    N = 64
-    K = 64
+    M = 512
+    N = 512
+    K = 128
     dtype = torch.int32
     acc_dtype = torch.int32
     
@@ -135,8 +128,8 @@ if __name__ == "__main__":
     ofm_tile_size = m_tile * n_tile * acc_dtype.itemsize
 
     n_cores = min(m_tile_num * n_tile_num, len(device.npu_cores))
-    npu_core_group = device.npu_core_coords[:n_cores]
-    dma_core_group = device.dma_core_coords
+    npu_core_group = device.npu_core_ids[:n_cores]
+    dma_core_group = device.dma_core_ids
     cb_n_pages = 8
     
     ifm:  torch.Tensor = torch.arange(0, M * K, dtype=dtype).reshape(M, K)
@@ -159,10 +152,10 @@ if __name__ == "__main__":
     bf_psum_ptr: Reference = device.create_sharded_main_buffer(page_size=ofm_tile_size, n_pages=ofm_tile_num)
     bf_ofm_ptr:  Reference = device.create_sharded_main_buffer(page_size=ofm_tile_size, n_pages=ofm_tile_num)
 
-    cb_ifm_ptrs:  list[Reference] = device.create_local_l1_circular_buffer(page_size=ifm_tile_size, n_pages=cb_n_pages, coords=npu_core_group)
-    cb_wgt_ptrs:  list[Reference] = device.create_local_l1_circular_buffer(page_size=wgt_tile_size, n_pages=cb_n_pages, coords=npu_core_group)
-    cb_psum_ptrs: list[Reference] = device.create_local_l1_circular_buffer(page_size=ofm_tile_size, n_pages=cb_n_pages, coords=npu_core_group)
-    cb_ofm_ptrs:  list[Reference] = device.create_local_l1_circular_buffer(page_size=ofm_tile_size, n_pages=cb_n_pages, coords=npu_core_group)
+    cb_ifm_ptrs:  list[Reference] = device.create_local_l1_circular_buffer(page_size=ifm_tile_size, n_pages=cb_n_pages, core_ids=npu_core_group)
+    cb_wgt_ptrs:  list[Reference] = device.create_local_l1_circular_buffer(page_size=wgt_tile_size, n_pages=cb_n_pages, core_ids=npu_core_group)
+    cb_psum_ptrs: list[Reference] = device.create_local_l1_circular_buffer(page_size=ofm_tile_size, n_pages=cb_n_pages, core_ids=npu_core_group)
+    cb_ofm_ptrs:  list[Reference] = device.create_local_l1_circular_buffer(page_size=ofm_tile_size, n_pages=cb_n_pages, core_ids=npu_core_group)
 
     device.set_ptr_content(bf_ifm_ptr, tiled_ifm)
     device.set_ptr_content(bf_wgt_ptr, tiled_wgt)
@@ -173,8 +166,8 @@ if __name__ == "__main__":
         for n_it in range(n_tile_num):
             core_idx = (m_it * n_tile_num + n_it) % n_cores
 
-            coord = npu_core_group[core_idx]
-            core = device.get_core_from_coord(coord)
+            core_id = npu_core_group[core_idx]
+            core = device.get_core_from_id(core_id=core_id)
             
             core_bf_ifm_ptr  = bf_ifm_ptr[m_it * k_tile_num:(m_it + 1) * k_tile_num]
             core_bf_wgt_ptr  = bf_wgt_ptr[n_it * k_tile_num:(n_it + 1) * k_tile_num]

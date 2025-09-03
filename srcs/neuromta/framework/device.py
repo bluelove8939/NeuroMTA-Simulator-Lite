@@ -22,12 +22,14 @@ class Device:
         self._cores: dict[str, Core] = None
         
         self._verbose:      bool = False
-        self.create_trace:  bool = False
 
         self._rpc_req_send_inbox: dict[str, list[RPCMessage]] = {}
         self._rpc_rsp_send_inbox: dict[str, list[RPCMessage]] = {}
         
         self._companion_core = CompanionCore()
+        
+    def get_core_from_id(self, core_id: int) -> Core:
+        return self._cores[core_id]
         
     @property
     def companion_core(self) -> CompanionCore:
@@ -61,9 +63,6 @@ class Device:
         for core in self._cores.values():
             core.initialize_kernel_dispatch_queue()
             core.initialize_mp_queue_inbox(rpc_req_send_inbox=self._rpc_req_send_inbox, rpc_rsp_send_inbox=self._rpc_rsp_send_inbox)
-        
-        if create_trace is not None and isinstance(create_trace, bool):
-            self.create_trace = create_trace
         
         return self
     
@@ -100,7 +99,7 @@ class Device:
         
         step_cnt = 0
 
-        while not all(core.is_idle for core in self._cores.values()):
+        while not all(core.is_idle for core in self._cores.values()):  
             step_cnt += 1
             if step_cnt >= max_steps > 0:
                 print(f"[INFO] Reached maximum steps: {max_steps}. Stopping simulation.")
@@ -116,6 +115,9 @@ class Device:
                 elif c is not None:
                     remaining_cycles = min(remaining_cycles, c)
                     
+            for core_id in core_ids:
+                self._cores[core_id].rpc_update_routine()
+                    
             if remaining_cycles == 0 or remaining_cycles is None:
                 remaining_cycles = self.companion_core.update_cycle_time_until_cmd_executed()
                     
@@ -123,13 +125,10 @@ class Device:
                     remaining_cycles = cycle_resolution
             else:
                 self.companion_core.update_cycle_time_companion_modules(cycle_time=remaining_cycles)
-
+            
             for core_id in core_ids:
                 self._cores[core_id].update_cycle_time(cycle_time=remaining_cycles)
-                
-            for core_id in core_ids:
-                self._cores[core_id].rpc_update_routine()
-                
+        
         if save_trace:
             for core_id, tracer in tracers.items():
                 if not tracer.is_empty:

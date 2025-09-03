@@ -44,13 +44,13 @@ class MXUContext:
     def __init__(
         self,
         
-        pe_arr_height: int = 32,
-        pe_arr_width: int = 32,
-        seq_len: int = 32,
-        dtype: torch.dtype = torch.float32,
-        acc_dtype: torch.dtype = torch.float32,
-        dataflow: MXUDataflow = MXUDataflow.OS,
-        op_latency_per_byte: int = 1,
+        pe_arr_height: int,
+        pe_arr_width: int,
+        seq_len: int,
+        dtype: torch.dtype,
+        acc_dtype: torch.dtype,
+        dataflow: MXUDataflow,
+        op_latency_per_byte: int,
     ):
         self.pe_arr_height  = pe_arr_height
         self.pe_arr_width   = pe_arr_width

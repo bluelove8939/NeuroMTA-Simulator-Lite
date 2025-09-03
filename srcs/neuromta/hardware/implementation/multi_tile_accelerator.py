@@ -19,11 +19,11 @@ from neuromta.hardware.companions.dramsim import DRAMSim3
 
 
 __all__ = [
-    "MTAccelerator"
+    "MultiTileAccelerator"
 ]
 
 
-class MTAccelerator(Device):
+class MultiTileAccelerator(Device):
     def __init__(
         self, 
         
@@ -36,26 +36,26 @@ class MTAccelerator(Device):
         super().__init__()
         
         self.cmap_context = CmapContext(config=cmap_config)
-        self.icnt_context = IcntContext(**icnt_config)
-        self.mem_context  = MemContext(**mem_config)
+        self.icnt_context = IcntContext(config=icnt_config)
+        self.mem_context  = MemContext(config=mem_config)
         
         self.mxu_config = mxu_config
         self.vpu_config = vpu_config
         
-        self.npu_core_coords = self.cmap_context.npu_core_coords
-        self.dma_core_coords = self.cmap_context.dma_core_coords
+        self.npu_core_ids = self.cmap_context.npu_core_ids
+        self.dma_core_ids = self.cmap_context.dma_core_ids
 
-        self.npu_coord_to_core_idx_mappings = {coord: idx for idx, coord in enumerate(self.npu_core_coords)}
-        self.dma_coord_to_core_idx_mappings = {coord: idx for idx, coord in enumerate(self.dma_core_coords)}
+        self.npu_core_id_to_idx_mappings = {core_id: idx for idx, core_id in enumerate(self.npu_core_ids)}
+        self.dma_core_id_to_idx_mappings = {core_id: idx for idx, core_id in enumerate(self.dma_core_ids)}
 
         self.npu_cores: list[NPUCore] = [
-            NPUCore(coord=coord, mem_context=self.mem_context, cmap_context=self.cmap_context, mxu_config=self.mxu_config, vpu_config=self.vpu_config)
-            for coord in self.npu_core_coords
+            NPUCore(core_id=core_id, mem_context=self.mem_context, cmap_context=self.cmap_context, mxu_config=self.mxu_config, vpu_config=self.vpu_config)
+            for core_id in self.npu_core_ids
         ]
         
         self.dma_cores: list[DMACore] = [
-            DMACore(coord=coord, mem_context=self.mem_context, cmap_context=self.cmap_context)
-            for coord in self.dma_core_coords
+            DMACore(core_id=core_id, mem_context=self.mem_context, cmap_context=self.cmap_context)
+            for core_id in self.dma_core_ids
         ]
         
         self.icnt_core = IcntCore(cmap_context=self.cmap_context, icnt_context=self.icnt_context)
@@ -64,7 +64,7 @@ class MTAccelerator(Device):
         if self.icnt_context.booksim2_enable:
             self.companion_core.register_companion_module(
                 self.cmap_context.config.booksim_module_id,
-                module=BookSim2(config=self.icnt_context.booksim2_config)
+                module=BookSim2(config=self.icnt_context.config.booksim2_config)
             )
         
         if self.mem_context.main_config.dramsim3_enable:
@@ -72,88 +72,75 @@ class MTAccelerator(Device):
                 self.cmap_context.config.dramsim_module_id,
                 module=DRAMSim3(config=self.mem_context.main_config.dramsim3_config)
             )
-        
-    def get_core_from_coord(self, coord: tuple[int, int]) -> NPUCore | DMACore:
-        if coord in self.npu_coord_to_core_idx_mappings:
-            return self.npu_cores[self.npu_coord_to_core_idx_mappings[coord]]
-        elif coord in self.dma_coord_to_core_idx_mappings:
-            return self.dma_cores[self.dma_coord_to_core_idx_mappings[coord]]
-        else:
-            raise ValueError(f"[ERROR] No core found for coordinate {coord}.")
     
-    def get_npu_core(self, key: tuple[int, int] | int) -> NPUCore:
-        if isinstance(key, int):
-            coord = self.cmap_context.get_coord_from_address(addr=key)
-        elif isinstance(key, tuple):
-            coord = key
-        
-        core_idx = self.npu_coord_to_core_idx_mappings.get(coord, None)
-        
-        if core_idx is None:
-            raise Exception(f"[ERROR] No NPU core found for coordinate {coord}.")
+    def get_npu_core(self, core_id: int=None, coord: tuple[int, int]=None, addr: int=None) -> NPUCore:
+        if core_id is None and coord is None and addr is None:
+            raise Exception(f"[ERROR] Please provide exactly one of core_id, coord, or addr to identify the NPU core.")
+            
+        if core_id is None:
+            if coord is not None:
+                core_id = self.icnt_context.coord_to_core_id(coord)
+            elif addr is not None:
+                addr_space_entry = self.cmap_context.get_addr_space_entry_from_address(addr)
+                core_id = addr_space_entry.core_ids[0]  # TODO: only one?
+
+        core_idx = self.npu_core_id_to_idx_mappings[core_id]
 
         return self.npu_cores[core_idx]
     
-    def get_l1_mem_handle(self, key: tuple[int, int] | int) -> MemoryHandle:
-        core = self.get_npu_core(key)
+    def get_l1_mem_handle(self, core_id: int=None, coord: tuple[int, int]=None, addr: int=None) -> MemoryHandle:
+        core = self.get_npu_core(core_id=core_id, coord=coord, addr=addr)
         return core.mem_handle
     
     def get_main_mem_handle(self) -> MemoryHandle:
         return self.main_mem_core.mem_handle
 
-    def create_local_l1_circular_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference | list[Reference]:
-        if coords is None:
-            coords = self.npu_core_coords
-        if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
-            coords = [coords]
-            
+    def create_local_l1_circular_buffer(self, page_size: int, n_pages: int, core_ids: list[int]=None) -> Reference | list[Reference]:
+        if core_ids is None:
+            core_ids = self.npu_core_ids
+        if not isinstance(core_ids, Sequence):
+            core_ids = [core_ids]
+
         ptrs: list[BufferHandle] = []
 
-        for coord in coords:
-            mem_handle = self.get_l1_mem_handle(coord)
+        for core_id in core_ids:
+            mem_handle = self.get_l1_mem_handle(core_id=core_id)
             ptr = create_uniform_buffer(mem_handle=mem_handle, page_size=page_size, n_pages=n_pages, is_circular=True)
             ptrs.append(ptr)
 
-        if len(coords) == 1:
+        if len(core_ids) == 1:
             return ptrs[0]
         return ptrs
     
-    def create_local_l1_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference | list[Reference]:
-        if coords is None:
-            coords = self.npu_core_coords
-        if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
-            coords = [coords]
+    def create_local_l1_buffer(self, page_size: int, n_pages: int, core_ids: list[int]=None) -> Reference | list[Reference]:
+        if core_ids is None:
+            core_ids = self.npu_core_ids
+        if not isinstance(core_ids, Sequence):
+            core_ids = [core_ids]
             
         ptrs: list[BufferHandle] = []
 
-        for coord in coords:
-            mem_handle = self.get_l1_mem_handle(coord)
+        for core_id in core_ids:
+            mem_handle = self.get_l1_mem_handle(core_id=core_id)
             ptr = create_uniform_buffer(mem_handle=mem_handle, page_size=page_size, n_pages=n_pages, is_circular=False)
             ptrs.append(ptr)
         
-        if len(coords) == 1:
+        if len(core_ids) == 1:
             return ptrs[0]
         return ptrs
 
-    def create_sharded_l1_buffer(self, page_size: int, n_pages: int, coords: list[tuple[int, int]]=None) -> Reference:
-        if coords is None:
-            coords = self.cmap_context.config.get_core_ids(CmapCoreType.NPU)
-        if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
-            coords = [coords]
+    def create_sharded_l1_buffer(self, page_size: int, n_pages: int, core_ids: list[int]=None) -> Reference:
+        if core_ids is None:
+            core_ids = self.cmap_context.config.get_core_ids(CmapCoreType.NPU)
+        if not isinstance(core_ids, Sequence):
+            core_ids = [core_ids]
 
-        mem_handles = [self.get_l1_mem_handle(coord) for coord in coords]
+        mem_handles = [self.get_l1_mem_handle(core_id=core_id) for core_id in core_ids]
         ptr = create_distributed_buffer(mem_handles=mem_handles, page_size=page_size, n_pages=n_pages)
 
         return ptr
 
-    def create_sharded_main_buffer(self, page_size: int, n_pages: int, channel_id: int | Sequence[int]=None) -> Reference:
-        # if coords is None:
-        #     coords = self.cmap_context.config.core_coord(CmapCoreType.DMA)
-        # if len(coords) == 2 and isinstance(coords[0], int) and isinstance(coords[1], int):
-        #     coords = [coords]
-            
-        # channel_id = [self.get_core_from_coord(coord).channel_id for coord in coords]
-        
+    def create_sharded_main_buffer(self, page_size: int, n_pages: int, channel_id: int | Sequence[int]=None) -> Reference:        
         if channel_id is None:
             channel_id = list(range(self.cmap_context.config.n_main_mem_channels))
         
@@ -195,7 +182,7 @@ class MTAccelerator(Device):
         if self.cmap_context.config.check_main_mem_addr(ptr.addr):
             mem_handle = self.get_main_mem_handle()
         elif self.cmap_context.config.check_l1_mem_addr(ptr.addr):
-            mem_handle = self.get_l1_mem_handle(ptr.addr)
+            mem_handle = self.get_l1_mem_handle(addr=ptr.addr)
         else:
             raise Exception(f"[ERROR] Unsupported address: {ptr.addr}")
 
@@ -232,7 +219,7 @@ class MTAccelerator(Device):
         if self.cmap_context.config.check_main_mem_addr(ptr.addr):
             mem_handle = self.get_main_mem_handle()
         elif self.cmap_context.config.check_l1_mem_addr(ptr.addr):
-            mem_handle = self.get_l1_mem_handle(ptr.addr)
+            mem_handle = self.get_l1_mem_handle(addr=ptr.addr)
         else:
             raise Exception(f"[ERROR] Unsupported address: {ptr.addr}")
         

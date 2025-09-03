@@ -144,7 +144,6 @@ def core_kernel_method(_func: Callable):
         )
 
         if get_global_context_mode() == GlobalContextMode.IDLE:
-            # _core.dispatch_main_kernel(kernel)
             pass  # do not automatically dispatch kernel
         elif get_global_context_mode() == GlobalContextMode.COMPILE:
             kernel_context = get_global_kernel_context()
@@ -595,6 +594,7 @@ class Core:
         self._dispatched_rpc_kernels:       dict[str, Kernel] = {}
         self._dispatched_rpc_msg_mappings:  dict[str, RPCMessage] = {}  # RPC kernel -> RPC request message (given from the source core)
 
+        self._suspended_main_kernels: dict[str, list[Kernel]] = {}
         self._suspended_rpc_req_msg: dict[str, RPCMessage] = {}
         self._suspended_rpc_rsp_msg: dict[str, RPCMessage] = {}
 
@@ -618,6 +618,7 @@ class Core:
         self._dispatched_main_kernels.clear()
         self._dispatched_rpc_kernels.clear()
         self._dispatched_rpc_msg_mappings.clear()
+        self._suspended_main_kernels.clear()
         self._suspended_rpc_req_msg.clear()
         self._suspended_rpc_rsp_msg.clear()
         
@@ -642,11 +643,13 @@ class Core:
     def dispatch_main_kernel(self, slot_id: Any, kernel: Kernel):
         if not isinstance(kernel, Kernel):
             raise Exception(f"[ERROR] Cannot dispatch kernel '{kernel}' to the core since it is not an instance of CompiledKernel")
-        
+
         if slot_id in self._dispatched_main_kernels:
-            prev_kernel = self._dispatched_main_kernels[slot_id]
-            prev_kernel.add_execution_step(kernel)  
+            if slot_id not in self._suspended_main_kernels:
+                self._suspended_main_kernels[slot_id] = []
+            self._suspended_main_kernels[slot_id].append(kernel)
         else:
+            # print(f"[DEBUG] [{self.core_id}] Dispatching kernel '{kernel.kernel_id_full}' to slot {slot_id}")
             self._dispatched_main_kernels[slot_id] = kernel
 
     def dispatch_rpc_kernel(self, kernel: Kernel, msg: RPCMessage):
@@ -681,22 +684,30 @@ class Core:
         self._rpc_rsp_msg_receive_routine()      # receive RPC response message and register them as suspended
         
     def update_cycle_time(self, cycle_time: int):
-        main_kernel_names = list(self._dispatched_main_kernels.keys())
-        rpc_kernel_names = list(self._dispatched_rpc_kernels.keys())
+        main_kernel_slot_ids = list(self._dispatched_main_kernels.keys())
+        rpc_kernel_slot_ids  = list(self._dispatched_rpc_kernels.keys())
 
-        for kernel_name in main_kernel_names:
-            kernel = self._dispatched_main_kernels[kernel_name]
+        for slot_id in main_kernel_slot_ids:
+            kernel = self._dispatched_main_kernels[slot_id]
             kernel.update_cycle_time(self, cycle_time)
 
             if kernel.is_finished(self):
-                del self._dispatched_main_kernels[kernel_name] # if the kernel is main kernel, simply remove the kernel from the "dispatched_kernels" dictionary
+                self._dispatched_main_kernels.pop(slot_id) # if the kernel is main kernel, simply remove the kernel from the "dispatched_kernels" dictionary
+                # print(f"[DEBUG] [{self.core_id}] Terminating kernel '{kernel.kernel_id_full}' to slot {slot_id}")
+                
+                if slot_id in self._suspended_main_kernels:
+                    if len(self._suspended_main_kernels[slot_id]) > 0:
+                        suspended_kernel = self._suspended_main_kernels[slot_id].pop(0)
+                        # self.dispatch_main_kernel(slot_id, suspended_kernel)
+                        # print(f"[DEBUG] [{self.core_id}] Dispatching suspended kernel '{suspended_kernel.kernel_id_full}' to slot {slot_id}")
+                        self._dispatched_main_kernels[slot_id] = suspended_kernel  # TODO: directly dispatch the suspended kernel without going through the dispatch_main_kernel() method
 
-        for kernel_name in rpc_kernel_names:
-            kernel = self._dispatched_rpc_kernels[kernel_name]
+        for slot_id in rpc_kernel_slot_ids:
+            kernel = self._dispatched_rpc_kernels[slot_id]
             kernel.update_cycle_time(self, cycle_time)
 
             if kernel.is_finished(self):
-                self._rpc_req_kernel_remove_and_rsp_send_routine(kernel_name)  # generate RPC response if the current ongoing RPC message is properly handled
+                self._rpc_req_kernel_remove_and_rsp_send_routine(slot_id)  # generate RPC response if the current ongoing RPC message is properly handled
             
         self._timestamp += cycle_time
     
@@ -790,23 +801,10 @@ class Core:
         
         rsp_msg = self._suspended_rpc_rsp_msg[msg_id]
         req_msg.copy_args_from_rsp(rsp_msg)
-            
-        del self._suspended_rpc_rsp_msg[msg_id]  # remove the response message from the suspended RPC response message list
-        del self._suspended_rpc_req_msg[msg_id]  # remove the request message from the suspended RPC request message list
 
-        return True
-    
-    @core_conditional_command_method
-    def async_rpc_barrier(self):
-        msg_ids = list(self._suspended_rpc_req_msg.keys())
-        
-        for msg_id in msg_ids:
-            if msg_id not in self._suspended_rpc_rsp_msg.keys():
-                return False
-            
-            del self._suspended_rpc_rsp_msg[msg_id]  # remove the response message from the suspended RPC response message list
-            del self._suspended_rpc_req_msg[msg_id]  # remove the request message from the suspended RPC request message list
-            
+        self._suspended_rpc_rsp_msg.pop(msg_id)  # remove the response message from the suspended RPC response message list
+        self._suspended_rpc_req_msg.pop(msg_id)  # remove the request message from the suspended RPC request message list
+
         return True
 
     def _rpc_req_kernel_dispatch_routine(self):
@@ -842,15 +840,15 @@ class Core:
             rsp_msg: RPCMessage = self.rpc_rsp_recv_queue.pop(0)
             self._suspended_rpc_rsp_msg[rsp_msg.msg_id] = rsp_msg
         
-    def _rpc_req_kernel_remove_and_rsp_send_routine(self, kernel_name: str):
-        kernel = self._dispatched_rpc_kernels[kernel_name]
-        req_msg = self._dispatched_rpc_msg_mappings[kernel_name]
+    def _rpc_req_kernel_remove_and_rsp_send_routine(self, slot_id: str):
+        kernel = self._dispatched_rpc_kernels[slot_id]
+        req_msg = self._dispatched_rpc_msg_mappings[slot_id]
         rsp_msg = req_msg.response(rpc_kernel=kernel)
 
         self._rpc_rsp_send_inbox[req_msg.src_core_id].append(rsp_msg)
 
-        del self._dispatched_rpc_kernels[kernel_name]       # remove the kernel from the dispatched RPC kernels
-        del self._dispatched_rpc_msg_mappings[kernel_name]  # remove the message
+        self._dispatched_rpc_kernels.pop(slot_id)       # remove the kernel from the dispatched RPC kernels
+        self._dispatched_rpc_msg_mappings.pop(slot_id)  # remove the message
     
     ###########################################################################
     # Properties
@@ -862,9 +860,14 @@ class Core:
     
     @property
     def is_idle_main(self) -> bool:
+        for kernel_queue in self._suspended_main_kernels.values():
+            if len(kernel_queue) > 0:
+                return False
+        
         for kernel in self._dispatched_main_kernels.values():
             if not kernel.is_finished(self):
                 return False
+        
         return True
 
     @property

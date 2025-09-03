@@ -4,7 +4,7 @@ import torch
 
 from neuromta.framework import *
 from neuromta.hardware import *
-from neuromta.ip.tenstorrent.architecture import TenstorrentConfig, TenstorrentDevice
+from neuromta.ip.google_tpu.architecture import GoogleTPUConfig, GoogleTPUDevice
 
 
 FILENAME = os.path.splitext(os.path.basename(__file__))[0]
@@ -12,15 +12,15 @@ TRACE_DIR = os.path.join(os.path.dirname(__file__), ".logs", FILENAME)
 
 
 if __name__ == "__main__":
-    config = TenstorrentConfig.BLACKHOLE()
+    config = GoogleTPUConfig.V4()
     
-    device = TenstorrentDevice(**config)
+    device = GoogleTPUDevice(**config)
     device.initialize()
     device.change_sim_model_options(use_cycle_model=True, use_functional_model=True)
     
-    M = 32
-    N = 32
-    K = 32
+    M = 128
+    N = 128
+    K = 128
     dtype = torch.int32
     acc_dtype = torch.int32
     
@@ -59,12 +59,12 @@ if __name__ == "__main__":
             wgt_ptr=wgt_ptr,
             psum_ptr=psum_ptr,
             ofm_ptr=ofm_ptr,
-            preload_wgt=False,
-            preload_psum=True,
+            preload_wgt=True,
+            preload_psum=False,
             flush_ofm=True
         )
         
-        core.vpu_reconfigure(vlen=32, vdtype=dtype)
+        core.vpu_reconfigure(vlen=128, vdtype=dtype)
         core.vpu_load_reg(ifm_ptr, 0, 0, 4)
         core.vpu_load_reg(wgt_ptr, 0, 4, 4)
         core.vpu_execute(VPUOperator.ADD, 0, 4, 8, inplace=False, burst_len=4)
